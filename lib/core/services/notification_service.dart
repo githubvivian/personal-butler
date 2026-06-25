@@ -1,0 +1,113 @@
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter_timezone/flutter_timezone.dart';
+import 'package:timezone/data/latest.dart' as tz;
+import 'package:timezone/timezone.dart' as tz;
+
+class NotificationService {
+  NotificationService._();
+  static final NotificationService instance = NotificationService._();
+
+  final _plugin = FlutterLocalNotificationsPlugin();
+  bool _ready = false;
+
+  Future<void> init() async {
+    if (_ready) return;
+    tz.initializeTimeZones();
+    try {
+      final tzInfo = await FlutterTimezone.getLocalTimezone();
+      tz.setLocalLocation(tz.getLocation(tzInfo.identifier));
+    } catch (_) {
+      tz.setLocalLocation(tz.getLocation('Asia/Shanghai'));
+    }
+
+    const android = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const settings = InitializationSettings(android: android);
+    await _plugin.initialize(settings);
+
+    const channelStrong = AndroidNotificationChannel(
+      'personal_butler_reminders',
+      '日程提醒',
+      description: '会议、生日当天等强提醒',
+      importance: Importance.high,
+    );
+    const channelWeak = AndroidNotificationChannel(
+      'personal_butler_followups',
+      '关注提醒',
+      description: '悬而未决、生日临近等弱提醒',
+      importance: Importance.defaultImportance,
+    );
+    final androidPlugin = _plugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    await androidPlugin?.createNotificationChannel(channelStrong);
+    await androidPlugin?.createNotificationChannel(channelWeak);
+
+    _ready = true;
+  }
+
+  Future<void> requestAndroidPermission() async {
+    if (!_ready) await init();
+    final androidPlugin = _plugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    await androidPlugin?.requestNotificationsPermission();
+  }
+
+  Future<void> scheduleItemReminder({
+    required int id,
+    required String title,
+    required String body,
+    required DateTime when,
+  }) async {
+    if (!_ready) await init();
+    if (!when.isAfter(DateTime.now())) return;
+
+    await _plugin.zonedSchedule(
+      id,
+      title,
+      body,
+      tz.TZDateTime.from(when, tz.local),
+      const NotificationDetails(
+        android: AndroidNotificationDetails(
+          'personal_butler_reminders',
+          '日程提醒',
+          channelDescription: '会议、生日当天等强提醒',
+          importance: Importance.high,
+          priority: Priority.high,
+        ),
+      ),
+      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      uiLocalNotificationDateInterpretation:
+          UILocalNotificationDateInterpretation.absoluteTime,
+    );
+  }
+
+  Future<void> scheduleWeakReminder({
+    required int id,
+    required String title,
+    required String body,
+    required DateTime when,
+  }) async {
+    if (!_ready) await init();
+    if (!when.isAfter(DateTime.now())) return;
+
+    await _plugin.zonedSchedule(
+      id,
+      title,
+      body,
+      tz.TZDateTime.from(when, tz.local),
+      const NotificationDetails(
+        android: AndroidNotificationDetails(
+          'personal_butler_followups',
+          '关注提醒',
+          channelDescription: '悬而未决、生日临近等弱提醒',
+          importance: Importance.defaultImportance,
+          priority: Priority.defaultPriority,
+        ),
+      ),
+      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+      uiLocalNotificationDateInterpretation:
+          UILocalNotificationDateInterpretation.absoluteTime,
+    );
+  }
+
+  Future<void> cancel(int id) => _plugin.cancel(id);
+}
