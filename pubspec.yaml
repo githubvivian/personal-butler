@@ -20,7 +20,7 @@ dependencies:
   flutter_secure_storage: ^9.2.4
   local_auth: ^2.3.0
   google_mlkit_text_recognition: ^0.14.0
-  photo_manager: ^3.6.4
+  photo_manager: ^3.10.0
   flutter_local_notifications: ^18.0.1
   timezone: ^0.10.0
   flutter_timezone: ^5.1.0

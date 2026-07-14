@@ -2,15 +2,21 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:photo_manager/photo_manager.dart';
 import 'package:personal_butler/app.dart';
 import 'package:personal_butler/core/models/models.dart';
 import 'package:personal_butler/core/providers/app_state.dart';
 import 'package:personal_butler/core/repositories/item_repository.dart';
 import 'package:personal_butler/features/auth/lock_screen.dart';
+import 'package:personal_butler/features/inbox/gallery_picker_screen.dart';
 import 'package:personal_butler/features/inbox/inbox_screen.dart';
 import 'package:personal_butler/features/shell/main_shell.dart';
 
 void main() {
+  tearDown(() {
+    PhotoManager.withPlugin(PhotoManagerPlugin());
+  });
+
   testWidgets('pending bootstrap only shows the startup loading screen', (
     tester,
   ) async {
@@ -92,6 +98,35 @@ void main() {
     expect(syncRemindersAttempts, 1);
     expect(appState.setupFirstRunAttempts, 0);
     expect(appState.unlockAttempts, 0);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('limited photo access opens the image gallery', (tester) async {
+    final photoManagerPlugin = _InboxPhotoManagerPlugin(
+      PermissionState.limited,
+    );
+    PhotoManager.withPlugin(photoManagerPlugin);
+    final appState = _TrackingAppState(
+      initializeNotifications: () async {},
+      readInitialized: () async => true,
+      validateSession: () async => true,
+      syncReminders: () async {},
+    );
+
+    await tester.pumpWidget(PersonalButlerApp(appState: appState));
+    await _pumpFrames(tester);
+    await tester.tap(find.text('截图导入'));
+    await _pumpFrames(tester, 10);
+
+    expect(find.byType(GalleryPickerScreen), findsOneWidget);
+    expect(
+      photoManagerPlugin.requestOption?.androidPermission.type,
+      RequestType.image,
+    );
+    expect(
+      photoManagerPlugin.requestOption?.androidPermission.mediaLocation,
+      isFalse,
+    );
     expect(tester.takeException(), isNull);
   });
 
@@ -219,4 +254,30 @@ class _EmptyItemRepository extends ItemRepository {
 
   @override
   Future<Map<String, int>> getTodayStats() async => {};
+}
+
+class _InboxPhotoManagerPlugin extends PhotoManagerPlugin {
+  _InboxPhotoManagerPlugin(this.permissionState);
+
+  final PermissionState permissionState;
+  PermissionRequestOption? requestOption;
+
+  @override
+  Future<PermissionState> requestPermissionExtend(
+    PermissionRequestOption requestOption,
+  ) async {
+    this.requestOption = requestOption;
+    return permissionState;
+  }
+
+  @override
+  Future<List<AssetPathEntity>> getAssetPathList({
+    bool hasAll = true,
+    bool onlyAll = false,
+    RequestType type = RequestType.common,
+    PMFilter? filterOption,
+    required PMPathFilter pathFilterOption,
+  }) async {
+    return [];
+  }
 }

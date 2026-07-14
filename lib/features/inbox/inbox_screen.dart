@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:photo_manager/photo_manager.dart';
 import 'package:provider/provider.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/models/models.dart';
 import '../../core/providers/app_state.dart';
 import '../../core/utils/ocr_service.dart';
+import '../../core/utils/photo_permission_helper.dart';
 import '../widgets/common_widgets.dart';
 import 'gallery_picker_screen.dart';
 
@@ -17,6 +17,8 @@ class InboxScreen extends StatefulWidget {
 }
 
 class _InboxScreenState extends State<InboxScreen> {
+  static const _photoPermissionHelper = PhotoPermissionHelper();
+
   List<ItemModel> _items = [];
   Map<String, int> _stats = {};
   bool _loading = true;
@@ -36,8 +38,8 @@ class _InboxScreenState extends State<InboxScreen> {
   }
 
   Future<void> _pickAndOcr() async {
-    final perm = await PhotoManager.requestPermissionExtend();
-    if (!perm.isAuth) {
+    final perm = await _photoPermissionHelper.requestImagePermission();
+    if (!_photoPermissionHelper.hasImageAccess(perm)) {
       if (mounted) snack(context, '需要相册权限以选择截图');
       return;
     }
