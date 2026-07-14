@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/providers/app_state.dart';
@@ -51,19 +50,28 @@ class _BackupScreenState extends State<BackupScreen> {
         title: const Text('恢复备份'),
         content: const Text('恢复将覆盖当前全部数据，是否继续？'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('继续')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('继续'),
+          ),
         ],
       ),
     );
-    if (confirm != true) return;
+    if (!mounted || confirm != true) return;
     setState(() => _busy = true);
     try {
-      await _backup.importEncryptedBackup(_password.text);
-      if (mounted) snack(context, '恢复成功');
+      final outcome = await _backup.importEncryptedBackup(_password.text);
+      if (!mounted) return;
+      if (outcome == BackupImportOutcome.cancelled) return;
+      snack(context, '恢复成功');
       context.read<AppState>().refresh();
     } catch (e) {
-      if (mounted) snack(context, '恢复失败，请检查密码与文件');
+      if (!mounted) return;
+      snack(context, '恢复失败，请检查密码与文件');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -100,10 +108,11 @@ class _BackupScreenState extends State<BackupScreen> {
             icon: const Icon(Icons.download),
             label: const Text('从备份恢复'),
           ),
-          if (_busy) const Padding(
-            padding: EdgeInsets.only(top: 24),
-            child: Center(child: CircularProgressIndicator()),
-          ),
+          if (_busy)
+            const Padding(
+              padding: EdgeInsets.only(top: 24),
+              child: Center(child: CircularProgressIndicator()),
+            ),
         ],
       ),
     );

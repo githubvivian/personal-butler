@@ -6,6 +6,17 @@ import 'package:share_plus/share_plus.dart';
 import '../database/database_helper.dart';
 import '../security/encryption_service.dart';
 
+enum BackupImportOutcome { imported, cancelled }
+
+class BackupImportSelectionException implements Exception {
+  const BackupImportSelectionException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => 'BackupImportSelectionException: $message';
+}
+
 class BackupService {
   final _enc = EncryptionService.instance;
 
@@ -30,13 +41,24 @@ class BackupService {
     await Share.shareXFiles([XFile(path)], text: '个人管家加密备份');
   }
 
-  Future<void> importEncryptedBackup(String password) async {
+  Future<BackupImportOutcome> importEncryptedBackup(String password) async {
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['pbak', 'txt', 'json'],
     );
-    if (result == null || result.files.single.path == null) return;
-    final content = await File(result.files.single.path!).readAsString();
+    if (result == null) return BackupImportOutcome.cancelled;
+    if (result.files.length != 1) {
+      throw const BackupImportSelectionException(
+        'Expected exactly one selected backup file.',
+      );
+    }
+    final path = result.files.single.path;
+    if (path == null) {
+      throw const BackupImportSelectionException(
+        'The selected backup file has no readable path.',
+      );
+    }
+    final content = await File(path).readAsString();
     final json = await _enc.decryptBackupPayload(content, password);
     final payload = jsonDecode(json) as Map<String, dynamic>;
     final tables = payload['tables'] as Map<String, dynamic>;
@@ -47,5 +69,6 @@ class BackupService {
           .toList();
     }
     await DatabaseHelper.instance.replaceAllData(data);
+    return BackupImportOutcome.imported;
   }
 }
