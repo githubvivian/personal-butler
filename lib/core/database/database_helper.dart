@@ -6,6 +6,15 @@ import '../security/encryption_service.dart';
 class DatabaseHelper {
   DatabaseHelper._();
   static final DatabaseHelper instance = DatabaseHelper._();
+  static const backupTableNames = <String>[
+    'items',
+    'attachments',
+    'schedule_entries',
+    'schedule_settings',
+    'birthdays',
+    'ideas',
+    'vault_entries',
+  ];
   Database? _db;
 
   Future<Database> get database async {
@@ -204,17 +213,8 @@ class DatabaseHelper {
 
   Future<Map<String, List<Map<String, dynamic>>>> exportAllData() async {
     final db = await database;
-    final tables = [
-      'items',
-      'attachments',
-      'schedule_entries',
-      'schedule_settings',
-      'birthdays',
-      'ideas',
-      'vault_entries',
-    ];
     final result = <String, List<Map<String, dynamic>>>{};
-    for (final table in tables) {
+    for (final table in backupTableNames) {
       result[table] = await db.query(table);
     }
     return result;

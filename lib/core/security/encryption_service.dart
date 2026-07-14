@@ -59,7 +59,10 @@ class EncryptionService {
     return aes.decrypt(enc.Encrypted.fromBase64(parts[1]), iv: iv);
   }
 
-  Future<String> encryptBackupPayload(String json, String backupPassword) async {
+  Future<String> encryptBackupPayload(
+    String json,
+    String backupPassword,
+  ) async {
     final salt = List<int>.generate(16, (_) => Random.secure().nextInt(256));
     final keyBytes = _deriveKey(backupPassword, salt);
     final key = enc.Key(Uint8List.fromList(keyBytes));
@@ -75,17 +78,76 @@ class EncryptionService {
     return jsonEncode(payload);
   }
 
-  Future<String> decryptBackupPayload(String content, String backupPassword) async {
-    final payload = jsonDecode(content) as Map<String, dynamic>;
-    final salt = base64.decode(payload['salt'] as String);
-    final iv = enc.IV(base64.decode(payload['iv'] as String));
+  Future<String> decryptBackupPayload(
+    String content,
+    String backupPassword,
+  ) async {
+    late final Object? decoded;
+    try {
+      decoded = jsonDecode(content);
+    } on FormatException {
+      throw const FormatException('Backup envelope is not valid JSON.');
+    }
+    if (decoded is! Map<String, dynamic>) {
+      throw const FormatException('Backup envelope must be a JSON object.');
+    }
+    final version = decoded['v'];
+    if (version is! int || version != 1) {
+      throw const FormatException('Backup envelope version must be integer 1.');
+    }
+    final saltText = _requiredBackupEnvelopeString(decoded, 'salt');
+    final ivText = _requiredBackupEnvelopeString(decoded, 'iv');
+    final dataText = _requiredBackupEnvelopeString(decoded, 'data');
+    final salt = _decodeBackupEnvelopeBytes(
+      'salt',
+      saltText,
+      expectedLength: 16,
+    );
+    final ivBytes = _decodeBackupEnvelopeBytes(
+      'iv',
+      ivText,
+      expectedLength: 16,
+    );
+    final encryptedBytes = _decodeBackupEnvelopeBytes('data', dataText);
+    if (encryptedBytes.isEmpty || encryptedBytes.length % 16 != 0) {
+      throw const FormatException('Backup envelope data is malformed.');
+    }
+    final iv = enc.IV(Uint8List.fromList(ivBytes));
     final keyBytes = _deriveKey(backupPassword, salt);
     final key = enc.Key(Uint8List.fromList(keyBytes));
     final aes = enc.Encrypter(enc.AES(key, mode: enc.AESMode.cbc));
     return aes.decrypt(
-      enc.Encrypted.fromBase64(payload['data'] as String),
+      enc.Encrypted(Uint8List.fromList(encryptedBytes)),
       iv: iv,
     );
+  }
+
+  String _requiredBackupEnvelopeString(
+    Map<String, dynamic> envelope,
+    String field,
+  ) {
+    final value = envelope[field];
+    if (value is! String) {
+      throw FormatException('Backup envelope $field must be a string.');
+    }
+    return value;
+  }
+
+  List<int> _decodeBackupEnvelopeBytes(
+    String field,
+    String value, {
+    int? expectedLength,
+  }) {
+    late final List<int> bytes;
+    try {
+      bytes = base64.decode(value);
+    } on FormatException {
+      throw FormatException('Backup envelope $field is malformed.');
+    }
+    if (expectedLength != null && bytes.length != expectedLength) {
+      throw FormatException('Backup envelope $field is malformed.');
+    }
+    return bytes;
   }
 
   List<int> _deriveKey(String password, List<int> salt) {

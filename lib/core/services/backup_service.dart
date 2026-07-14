@@ -17,8 +17,16 @@ class BackupImportSelectionException implements Exception {
   String toString() => 'BackupImportSelectionException: $message';
 }
 
+typedef BackupDataReplacer =
+    Future<void> Function(Map<String, List<Map<String, dynamic>>> data);
+
 class BackupService {
+  BackupService({BackupDataReplacer? replaceAllData})
+    : _replaceAllData =
+          replaceAllData ?? DatabaseHelper.instance.replaceAllData;
+
   final _enc = EncryptionService.instance;
+  final BackupDataReplacer _replaceAllData;
 
   Future<String> exportEncryptedBackup(String password) async {
     final data = await DatabaseHelper.instance.exportAllData();
@@ -60,15 +68,64 @@ class BackupService {
     }
     final content = await File(path).readAsString();
     final json = await _enc.decryptBackupPayload(content, password);
-    final payload = jsonDecode(json) as Map<String, dynamic>;
-    final tables = payload['tables'] as Map<String, dynamic>;
-    final data = <String, List<Map<String, dynamic>>>{};
-    for (final entry in tables.entries) {
-      data[entry.key] = (entry.value as List)
-          .map((e) => Map<String, dynamic>.from(e as Map))
-          .toList();
-    }
-    await DatabaseHelper.instance.replaceAllData(data);
+    final data = _parseBackupPayload(json);
+    await _replaceAllData(data);
     return BackupImportOutcome.imported;
+  }
+
+  Map<String, List<Map<String, dynamic>>> _parseBackupPayload(String json) {
+    late final Object? decoded;
+    try {
+      decoded = jsonDecode(json);
+    } on FormatException {
+      throw const FormatException('Backup payload is not valid JSON.');
+    }
+    if (decoded is! Map<String, dynamic>) {
+      throw const FormatException('Backup payload must be a JSON object.');
+    }
+    final version = decoded['version'];
+    if (version is! int || version != 1) {
+      throw const FormatException('Backup payload version must be integer 1.');
+    }
+    final tables = decoded['tables'];
+    if (tables is! Map<String, dynamic>) {
+      throw const FormatException('Backup payload tables must be an object.');
+    }
+    final expectedTables = DatabaseHelper.backupTableNames.toSet();
+    final actualTables = tables.keys.toSet();
+    if (actualTables.length != expectedTables.length ||
+        !actualTables.containsAll(expectedTables)) {
+      throw const FormatException(
+        'Backup payload tables must contain exactly the supported tables.',
+      );
+    }
+
+    final data = <String, List<Map<String, dynamic>>>{};
+    for (final table in DatabaseHelper.backupTableNames) {
+      final rows = tables[table];
+      if (rows is! List) {
+        throw FormatException('Backup payload table $table must be a list.');
+      }
+      final validatedRows = <Map<String, dynamic>>[];
+      for (final row in rows) {
+        if (row is! Map) {
+          throw FormatException(
+            'Backup payload table $table contains a non-object row.',
+          );
+        }
+        if (row.keys.any((key) => key is! String)) {
+          throw FormatException(
+            'Backup payload table $table contains a row with non-string keys.',
+          );
+        }
+        final validatedRow = <String, dynamic>{};
+        for (final entry in row.entries) {
+          validatedRow[entry.key as String] = entry.value;
+        }
+        validatedRows.add(validatedRow);
+      }
+      data[table] = validatedRows;
+    }
+    return data;
   }
 }
