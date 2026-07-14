@@ -24,6 +24,15 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
+// file_picker 11.0.2 skips its Kotlin plugin on AGP 9 because it assumes
+// built-in Kotlin is enabled. Flutter currently opts this project out of
+// built-in Kotlin, so apply the configured Kotlin plugin for this module.
+subprojects {
+    if (name == "file_picker") {
+        pluginManager.apply("org.jetbrains.kotlin.android")
+    }
+}
+
 subprojects {
     plugins.withId("com.android.application") {
         extensions.configure<ApplicationExtension> {

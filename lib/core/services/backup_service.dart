@@ -31,7 +31,7 @@ class BackupService {
   }
 
   Future<void> importEncryptedBackup(String password) async {
-    final result = await FilePicker.instance.pickFiles(
+    final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['pbak', 'txt', 'json'],
     );
