@@ -1,3 +1,13 @@
+const _copyWithUnset = _CopyWithUnset();
+
+final class _CopyWithUnset {
+  const _CopyWithUnset();
+}
+
+T? _copyWithNullable<T>(Object? value, T? current) {
+  return identical(value, _copyWithUnset) ? current : value as T?;
+}
+
 DateTime? _parseModelDate(dynamic value) {
   if (value == null) return null;
   return DateTime.parse(value as String);
@@ -55,19 +65,19 @@ class ItemModel {
   ItemModel copyWith({
     String? type,
     String? title,
-    String? description,
+    Object? description = _copyWithUnset,
     String? owner,
-    DateTime? startAt,
-    DateTime? endAt,
-    String? location,
-    String? participants,
+    Object? startAt = _copyWithUnset,
+    Object? endAt = _copyWithUnset,
+    Object? location = _copyWithUnset,
+    Object? participants = _copyWithUnset,
     String? status,
     String? inboxStatus,
-    String? pendingStatus,
-    DateTime? nextFollowUpAt,
-    double? amount,
-    String? ocrText,
-    String? notes,
+    Object? pendingStatus = _copyWithUnset,
+    Object? nextFollowUpAt = _copyWithUnset,
+    Object? amount = _copyWithUnset,
+    Object? ocrText = _copyWithUnset,
+    Object? notes = _copyWithUnset,
     int? reminderMinutes,
     bool? isDeleted,
     DateTime? updatedAt,
@@ -76,19 +86,19 @@ class ItemModel {
       id: id,
       type: type ?? this.type,
       title: title ?? this.title,
-      description: description ?? this.description,
+      description: _copyWithNullable(description, this.description),
       owner: owner ?? this.owner,
-      startAt: startAt ?? this.startAt,
-      endAt: endAt ?? this.endAt,
-      location: location ?? this.location,
-      participants: participants ?? this.participants,
+      startAt: _copyWithNullable(startAt, this.startAt),
+      endAt: _copyWithNullable(endAt, this.endAt),
+      location: _copyWithNullable(location, this.location),
+      participants: _copyWithNullable(participants, this.participants),
       status: status ?? this.status,
       inboxStatus: inboxStatus ?? this.inboxStatus,
-      pendingStatus: pendingStatus ?? this.pendingStatus,
-      nextFollowUpAt: nextFollowUpAt ?? this.nextFollowUpAt,
-      amount: amount ?? this.amount,
-      ocrText: ocrText ?? this.ocrText,
-      notes: notes ?? this.notes,
+      pendingStatus: _copyWithNullable(pendingStatus, this.pendingStatus),
+      nextFollowUpAt: _copyWithNullable(nextFollowUpAt, this.nextFollowUpAt),
+      amount: _copyWithNullable(amount, this.amount),
+      ocrText: _copyWithNullable(ocrText, this.ocrText),
+      notes: _copyWithNullable(notes, this.notes),
       reminderMinutes: reminderMinutes ?? this.reminderMinutes,
       isDeleted: isDeleted ?? this.isDeleted,
       createdAt: createdAt,
@@ -278,12 +288,12 @@ class ScheduleEntryModel {
     int? weekday,
     String? startTime,
     String? endTime,
-    String? location,
+    Object? location = _copyWithUnset,
     int? startWeek,
     int? endWeek,
     String? repeatMode,
-    String? weekPattern,
-    String? customWeeks,
+    Object? weekPattern = _copyWithUnset,
+    Object? customWeeks = _copyWithUnset,
     bool? isDeleted,
     DateTime? createdAt,
   }) {
@@ -294,12 +304,12 @@ class ScheduleEntryModel {
       weekday: weekday ?? this.weekday,
       startTime: startTime ?? this.startTime,
       endTime: endTime ?? this.endTime,
-      location: location ?? this.location,
+      location: _copyWithNullable(location, this.location),
       startWeek: startWeek ?? this.startWeek,
       endWeek: endWeek ?? this.endWeek,
       repeatMode: repeatMode ?? this.repeatMode,
-      weekPattern: weekPattern ?? this.weekPattern,
-      customWeeks: customWeeks ?? this.customWeeks,
+      weekPattern: _copyWithNullable(weekPattern, this.weekPattern),
+      customWeeks: _copyWithNullable(customWeeks, this.customWeeks),
       isDeleted: isDeleted ?? this.isDeleted,
       createdAt: createdAt ?? this.createdAt,
     );
