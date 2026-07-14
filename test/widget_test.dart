@@ -1,10 +1,222 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:personal_butler/app.dart';
+import 'package:personal_butler/core/models/models.dart';
+import 'package:personal_butler/core/providers/app_state.dart';
+import 'package:personal_butler/core/repositories/item_repository.dart';
+import 'package:personal_butler/features/auth/lock_screen.dart';
+import 'package:personal_butler/features/inbox/inbox_screen.dart';
+import 'package:personal_butler/features/shell/main_shell.dart';
 
 void main() {
-  testWidgets('App boots', (tester) async {
-    await tester.pumpWidget(const PersonalButlerApp());
-    await tester.pump();
-    expect(find.text('个人管家'), findsWidgets);
+  testWidgets('pending bootstrap only shows the startup loading screen', (
+    tester,
+  ) async {
+    final bootstrapGate = Completer<void>();
+    final appState = _TrackingAppState(
+      initializeNotifications: () => bootstrapGate.future,
+      readInitialized: () async => false,
+      validateSession: () async => false,
+      syncReminders: () async {},
+    );
+
+    await tester.pumpWidget(PersonalButlerApp(appState: appState));
+    await _pumpFrames(tester);
+
+    expect(find.byKey(const Key('startup-loading-screen')), findsOneWidget);
+    expect(find.text('正在安全启动…'), findsOneWidget);
+    expect(find.byType(InboxScreen), findsNothing);
+    expect(find.byType(MainShell), findsNothing);
+    expect(find.byType(LockScreen), findsNothing);
+    expect(appState.setupFirstRunAttempts, 0);
+    expect(appState.unlockAttempts, 0);
+    expect(tester.takeException(), isNull);
   });
+
+  testWidgets('first run routes to setup without session validation or sync', (
+    tester,
+  ) async {
+    var validateSessionAttempts = 0;
+    var syncRemindersAttempts = 0;
+    final appState = _TrackingAppState(
+      initializeNotifications: () async {},
+      readInitialized: () async => false,
+      validateSession: () async {
+        validateSessionAttempts++;
+        return true;
+      },
+      syncReminders: () async {
+        syncRemindersAttempts++;
+      },
+    );
+
+    await tester.pumpWidget(PersonalButlerApp(appState: appState));
+    await _pumpFrames(tester);
+
+    expect(find.byType(LockScreen), findsOneWidget);
+    expect(find.byType(InboxScreen), findsNothing);
+    expect(find.byType(MainShell), findsNothing);
+    expect(appState.setupFirstRunAttempts, 1);
+    expect(appState.unlockAttempts, 0);
+    expect(validateSessionAttempts, 0);
+    expect(syncRemindersAttempts, 0);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('valid session syncs once and routes directly to the inbox', (
+    tester,
+  ) async {
+    var validateSessionAttempts = 0;
+    var syncRemindersAttempts = 0;
+    final appState = _TrackingAppState(
+      initializeNotifications: () async {},
+      readInitialized: () async => true,
+      validateSession: () async {
+        validateSessionAttempts++;
+        return true;
+      },
+      syncReminders: () async {
+        syncRemindersAttempts++;
+      },
+    );
+
+    await tester.pumpWidget(PersonalButlerApp(appState: appState));
+    await _pumpFrames(tester);
+
+    expect(find.byType(MainShell), findsOneWidget);
+    expect(find.byType(InboxScreen), findsOneWidget);
+    expect(find.byType(LockScreen), findsNothing);
+    expect(validateSessionAttempts, 1);
+    expect(syncRemindersAttempts, 1);
+    expect(appState.setupFirstRunAttempts, 0);
+    expect(appState.unlockAttempts, 0);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('bootstrap failure shows a safe retry page and stays locked', (
+    tester,
+  ) async {
+    final appState = _TrackingAppState(
+      initializeNotifications: () async {
+        throw StateError('敏感启动细节');
+      },
+      readInitialized: () async => true,
+      validateSession: () async => true,
+      syncReminders: () async {},
+    );
+
+    await tester.pumpWidget(PersonalButlerApp(appState: appState));
+    await _pumpFrames(tester);
+
+    expect(find.byKey(const Key('startup-error-screen')), findsOneWidget);
+    expect(find.text('安全启动失败'), findsOneWidget);
+    expect(find.text('无法安全验证应用状态，请重试。'), findsOneWidget);
+    expect(find.text('重试'), findsOneWidget);
+    expect(find.textContaining('敏感启动细节'), findsNothing);
+    expect(find.byType(InboxScreen), findsNothing);
+    expect(find.byType(MainShell), findsNothing);
+    expect(find.byType(LockScreen), findsNothing);
+    expect(appState.loading, isFalse);
+    expect(appState.unlocked, isFalse);
+    expect(appState.bootstrapError, isNotNull);
+    expect(appState.setupFirstRunAttempts, 0);
+    expect(appState.unlockAttempts, 0);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'retry clears the old error and can complete to the lock screen',
+    (tester) async {
+      var attempts = 0;
+      final retryGate = Completer<void>();
+      final appState = _TrackingAppState(
+        initializeNotifications: () async {
+          attempts++;
+          if (attempts == 1) {
+            throw StateError('first failure');
+          }
+          await retryGate.future;
+        },
+        readInitialized: () async => true,
+        validateSession: () async => false,
+        syncReminders: () async {},
+      );
+
+      await tester.pumpWidget(PersonalButlerApp(appState: appState));
+      await _pumpFrames(tester);
+      expect(find.byKey(const Key('startup-error-screen')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('startup-retry-button')));
+      await tester.pump();
+
+      expect(appState.loading, isTrue);
+      expect(appState.bootstrapError, isNull);
+      expect(appState.unlocked, isFalse);
+      expect(find.byKey(const Key('startup-loading-screen')), findsOneWidget);
+      expect(find.byType(LockScreen), findsNothing);
+
+      retryGate.complete();
+      await _pumpFrames(tester);
+
+      expect(appState.loading, isFalse);
+      expect(appState.bootstrapError, isNull);
+      expect(appState.initialized, isTrue);
+      expect(appState.unlocked, isFalse);
+      expect(find.byType(LockScreen), findsOneWidget);
+      expect(find.byType(InboxScreen), findsNothing);
+      expect(appState.setupFirstRunAttempts, 0);
+      expect(appState.unlockAttempts, 1);
+      expect(tester.takeException(), isNull);
+    },
+  );
+}
+
+Future<void> _pumpFrames(WidgetTester tester, [int count = 6]) async {
+  for (var i = 0; i < count; i++) {
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+}
+
+class _TrackingAppState extends AppState {
+  _TrackingAppState({
+    required Future<void> Function() initializeNotifications,
+    required Future<bool> Function() readInitialized,
+    required Future<bool> Function() validateSession,
+    required Future<void> Function() syncReminders,
+  }) : super(
+         initializeNotifications: initializeNotifications,
+         readInitialized: readInitialized,
+         validateSession: validateSession,
+         syncReminders: syncReminders,
+       );
+
+  final ItemRepository _items = _EmptyItemRepository();
+  int setupFirstRunAttempts = 0;
+  int unlockAttempts = 0;
+  final Completer<bool> _authentication = Completer<bool>();
+
+  @override
+  ItemRepository get items => _items;
+
+  @override
+  Future<bool> setupFirstRun() {
+    setupFirstRunAttempts++;
+    return _authentication.future;
+  }
+
+  @override
+  Future<bool> unlock() {
+    unlockAttempts++;
+    return _authentication.future;
+  }
+}
+
+class _EmptyItemRepository extends ItemRepository {
+  @override
+  Future<List<ItemModel>> getInboxItems() async => [];
+
+  @override
+  Future<Map<String, int>> getTodayStats() async => {};
 }

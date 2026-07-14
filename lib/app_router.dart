@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'core/providers/app_state.dart';
 import 'features/auth/lock_screen.dart';
+import 'features/auth/startup_screen.dart';
 import 'features/birthday/birthday_screen.dart';
 import 'features/calendar/calendar_screen.dart';
 import 'features/family/child_detail_screen.dart';
@@ -26,14 +27,33 @@ GoRouter createRouter(AppState appState) {
     navigatorKey: _rootKey,
     refreshListenable: appState,
     redirect: (context, state) {
-      if (appState.loading) return null;
+      final location = state.matchedLocation;
+      final onLoading = location == '/loading';
+      final onStartupError = location == '/startup-error';
+
+      if (appState.loading) return onLoading ? null : '/loading';
+      if (appState.bootstrapError != null) {
+        return onStartupError ? null : '/startup-error';
+      }
+      if (onLoading || onStartupError) {
+        return appState.unlocked ? '/inbox' : '/lock';
+      }
+
       final onLock = state.matchedLocation == '/lock';
       if (!appState.unlocked && !onLock) return '/lock';
       if (appState.unlocked && onLock) return '/inbox';
       return null;
     },
-    initialLocation: '/inbox',
+    initialLocation: '/loading',
     routes: [
+      GoRoute(
+        path: '/loading',
+        builder: (_, _) => const StartupLoadingScreen(),
+      ),
+      GoRoute(
+        path: '/startup-error',
+        builder: (_, _) => StartupErrorScreen(onRetry: appState.bootstrap),
+      ),
       GoRoute(path: '/lock', builder: (_, __) => const LockScreen()),
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) =>

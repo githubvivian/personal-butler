@@ -8,7 +8,9 @@ import 'core/providers/app_state.dart';
 import 'core/theme/app_theme.dart';
 
 class PersonalButlerApp extends StatefulWidget {
-  const PersonalButlerApp({super.key});
+  final AppState? appState;
+
+  const PersonalButlerApp({super.key, this.appState});
 
   @override
   State<PersonalButlerApp> createState() => _PersonalButlerAppState();
@@ -21,7 +23,7 @@ class _PersonalButlerAppState extends State<PersonalButlerApp> {
   @override
   void initState() {
     super.initState();
-    _appState = AppState();
+    _appState = widget.appState ?? AppState();
     _router = createRouter(_appState);
     _appState.bootstrap();
   }
