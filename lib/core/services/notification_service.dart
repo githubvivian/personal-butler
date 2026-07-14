@@ -1,7 +1,21 @@
+import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
+
+Future<void> scheduleExactAlarmWithPermissionFallback(
+  Future<void> Function(AndroidScheduleMode mode) schedule,
+) async {
+  try {
+    await schedule(AndroidScheduleMode.exactAllowWhileIdle);
+  } on PlatformException catch (error) {
+    if (error.code != 'exact_alarms_not_permitted') {
+      rethrow;
+    }
+    await schedule(AndroidScheduleMode.inexactAllowWhileIdle);
+  }
+}
 
 class NotificationService {
   NotificationService._();
@@ -36,8 +50,10 @@ class NotificationService {
       description: '悬而未决、生日临近等弱提醒',
       importance: Importance.defaultImportance,
     );
-    final androidPlugin = _plugin.resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin>();
+    final androidPlugin = _plugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
     await androidPlugin?.createNotificationChannel(channelStrong);
     await androidPlugin?.createNotificationChannel(channelWeak);
 
@@ -46,8 +62,10 @@ class NotificationService {
 
   Future<void> requestAndroidPermission() async {
     if (!_ready) await init();
-    final androidPlugin = _plugin.resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin>();
+    final androidPlugin = _plugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
     await androidPlugin?.requestNotificationsPermission();
   }
 
@@ -60,23 +78,25 @@ class NotificationService {
     if (!_ready) await init();
     if (!when.isAfter(DateTime.now())) return;
 
-    await _plugin.zonedSchedule(
-      id,
-      title,
-      body,
-      tz.TZDateTime.from(when, tz.local),
-      const NotificationDetails(
-        android: AndroidNotificationDetails(
-          'personal_butler_reminders',
-          '日程提醒',
-          channelDescription: '会议、生日当天等强提醒',
-          importance: Importance.high,
-          priority: Priority.high,
+    await scheduleExactAlarmWithPermissionFallback(
+      (androidScheduleMode) => _plugin.zonedSchedule(
+        id,
+        title,
+        body,
+        tz.TZDateTime.from(when, tz.local),
+        const NotificationDetails(
+          android: AndroidNotificationDetails(
+            'personal_butler_reminders',
+            '日程提醒',
+            channelDescription: '会议、生日当天等强提醒',
+            importance: Importance.high,
+            priority: Priority.high,
+          ),
         ),
+        androidScheduleMode: androidScheduleMode,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
       ),
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
     );
   }
 
