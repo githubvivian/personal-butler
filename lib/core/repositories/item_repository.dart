@@ -206,8 +206,10 @@ class ItemRepository {
 
   Future<void> hardDelete(String id) async {
     final db = await _databaseProvider();
-    await db.delete('attachments', where: 'item_id = ?', whereArgs: [id]);
-    await db.delete('items', where: 'id = ?', whereArgs: [id]);
+    await db.transaction((txn) async {
+      await txn.delete('attachments', where: 'item_id = ?', whereArgs: [id]);
+      await txn.delete('items', where: 'id = ?', whereArgs: [id]);
+    });
     await _cancelBestEffort(id.hashCode);
     await _cancelBestEffort(ReminderSyncService.pendingId(id));
   }

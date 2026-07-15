@@ -360,6 +360,14 @@ void main() {
           await database.query('items', where: 'id = ?', whereArgs: [itemId]),
           hasLength(1),
         );
+        expect(
+          await database.query(
+            'attachments',
+            where: 'item_id = ?',
+            whereArgs: [itemId],
+          ),
+          hasLength(1),
+        );
         expect(cancelledIds, isEmpty);
       },
     );
