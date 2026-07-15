@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:personal_butler/core/providers/app_state.dart';
+import 'package:personal_butler/core/services/backup_service.dart';
 import 'package:personal_butler/features/settings/backup_screen.dart';
 import 'package:provider/provider.dart';
 
@@ -50,6 +53,66 @@ void main() {
       expect(find.byType(CircularProgressIndicator), findsNothing);
     },
   );
+
+  testWidgets('export failure shows a safe message and restores the controls', (
+    tester,
+  ) async {
+    final backupService = _ControlledBackupService(
+      (_) => Future<void>.error(
+        StateError('private-path-token from a platform plugin'),
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(home: BackupScreen(backupService: backupService)),
+    );
+    await tester.enterText(find.byType(TextField), 'secret1');
+    await tester.tap(find.text('导出加密备份'));
+    await tester.pump();
+
+    expect(find.text('备份失败，请稍后重试'), findsOneWidget);
+    expect(find.textContaining('private-path-token'), findsNothing);
+    expect(
+      tester
+          .widget<FilledButton>(find.widgetWithText(FilledButton, '导出加密备份'))
+          .onPressed,
+      isNotNull,
+    );
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('export failure after disposal does not use the stale context', (
+    tester,
+  ) async {
+    final export = Completer<void>();
+    final backupService = _ControlledBackupService((_) => export.future);
+
+    await tester.pumpWidget(
+      MaterialApp(home: BackupScreen(backupService: backupService)),
+    );
+    await tester.enterText(find.byType(TextField), 'secret1');
+    await tester.tap(find.text('导出加密备份'));
+    await tester.pump();
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+    export.completeError(
+      StateError('private-path-token from a delayed platform plugin'),
+    );
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+  });
+}
+
+class _ControlledBackupService extends BackupService {
+  _ControlledBackupService(this._shareBackup);
+
+  final Future<void> Function(String password) _shareBackup;
+
+  @override
+  Future<void> shareBackup(String password) => _shareBackup(password);
 }
 
 class _TrackingAppState extends AppState {

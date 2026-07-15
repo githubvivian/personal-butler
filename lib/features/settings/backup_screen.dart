@@ -6,7 +6,9 @@ import '../../core/services/backup_service.dart';
 import '../widgets/common_widgets.dart';
 
 class BackupScreen extends StatefulWidget {
-  const BackupScreen({super.key});
+  const BackupScreen({super.key, this.backupService});
+
+  final BackupService? backupService;
 
   @override
   State<BackupScreen> createState() => _BackupScreenState();
@@ -14,8 +16,14 @@ class BackupScreen extends StatefulWidget {
 
 class _BackupScreenState extends State<BackupScreen> {
   final _password = TextEditingController();
-  final _backup = BackupService();
+  late final BackupService _backup;
   bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _backup = widget.backupService ?? BackupService();
+  }
 
   @override
   void dispose() {
@@ -32,8 +40,8 @@ class _BackupScreenState extends State<BackupScreen> {
     try {
       await _backup.shareBackup(_password.text);
       if (mounted) snack(context, '加密备份已生成，请保存到安全位置');
-    } catch (e) {
-      if (mounted) snack(context, '备份失败：$e');
+    } catch (_) {
+      if (mounted) snack(context, '备份失败，请稍后重试');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
