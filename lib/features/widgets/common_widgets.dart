@@ -35,19 +35,24 @@ class AppCard extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(16),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      child: Stack(
+        fit: StackFit.passthrough,
         children: [
-          Container(
-            width: 4,
-            decoration: BoxDecoration(
-              color: accentColor,
-              borderRadius: const BorderRadius.horizontal(
-                left: Radius.circular(16),
+          Padding(padding: const EdgeInsets.only(left: 4), child: card),
+          Positioned(
+            top: 0,
+            bottom: 0,
+            left: 0,
+            child: Container(
+              width: 4,
+              decoration: BoxDecoration(
+                color: accentColor,
+                borderRadius: const BorderRadius.horizontal(
+                  left: Radius.circular(16),
+                ),
               ),
             ),
           ),
-          Expanded(child: card),
         ],
       ),
     );

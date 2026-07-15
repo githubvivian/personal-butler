@@ -9,6 +9,7 @@ import 'package:personal_butler/features/birthday/birthday_screen.dart';
 import 'package:personal_butler/features/inbox/ocr_confirm_screen.dart';
 import 'package:personal_butler/features/items/item_screens.dart';
 import 'package:personal_butler/features/pending/pending_screen.dart';
+import 'package:personal_butler/features/widgets/common_widgets.dart';
 
 void main() {
   testWidgets('CreateItem requests before saving an active pending reminder', (
@@ -221,6 +222,27 @@ void main() {
     expect(requests, 1);
     expect(repository.saved.single.pendingStatus, 'reviewing');
     expect(repository.saved.single.status, 'active');
+  });
+
+  testWidgets('PendingScreen renders its default non-empty card', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 900);
+    addTearDown(tester.view.resetPhysicalSize);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final item = _activePendingItem();
+    final repository = _SpyItemRepository(pendingItems: [item]);
+
+    await tester.pumpWidget(
+      MaterialApp(home: PendingScreen(itemRepository: repository)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.byType(AppCard), findsOneWidget);
+    expect(find.text(item.title), findsOneWidget);
   });
 
   testWidgets(
