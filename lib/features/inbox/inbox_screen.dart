@@ -4,13 +4,26 @@ import 'package:provider/provider.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/models/models.dart';
 import '../../core/providers/app_state.dart';
+import '../../core/repositories/item_repository.dart';
 import '../../core/utils/ocr_service.dart';
 import '../../core/utils/photo_permission_helper.dart';
 import '../widgets/common_widgets.dart';
 import 'gallery_picker_screen.dart';
 
+typedef OcrAssetChooser = Future<String?> Function();
+typedef OcrRecognizer = Future<String> Function(String assetId);
+
 class InboxScreen extends StatefulWidget {
-  const InboxScreen({super.key});
+  const InboxScreen({
+    super.key,
+    this.assetChooser,
+    this.recognizer,
+    this.itemRepository,
+  });
+
+  final OcrAssetChooser? assetChooser;
+  final OcrRecognizer? recognizer;
+  final ItemRepository? itemRepository;
 
   @override
   State<InboxScreen> createState() => _InboxScreenState();
@@ -22,6 +35,7 @@ class _InboxScreenState extends State<InboxScreen> {
   List<ItemModel> _items = [];
   Map<String, int> _stats = {};
   bool _loading = true;
+  bool _ocrInFlight = false;
 
   @override
   void initState() {
@@ -30,49 +44,104 @@ class _InboxScreenState extends State<InboxScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
-    final app = context.read<AppState>();
-    _items = await app.items.getInboxItems();
-    _stats = await app.items.getTodayStats();
-    setState(() => _loading = false);
+    if (mounted) setState(() => _loading = true);
+    final repository = widget.itemRepository ?? context.read<AppState>().items;
+    final items = await repository.getInboxItems();
+    final stats = await repository.getTodayStats();
+    if (!mounted) return;
+    setState(() {
+      _items = items;
+      _stats = stats;
+      _loading = false;
+    });
   }
 
   Future<void> _pickAndOcr() async {
+    if (_ocrInFlight) return;
+
+    final repository = widget.itemRepository ?? context.read<AppState>().items;
+    setState(() => _ocrInFlight = true);
+    OverlayEntry? loadingOverlay;
+
+    try {
+      String? assetId;
+      try {
+        assetId = await (widget.assetChooser ?? _chooseOcrAsset)();
+      } catch (_) {
+        _showOcrMessage('选择图片失败，请重试');
+        return;
+      }
+      if (!mounted || assetId == null) return;
+
+      final overlay = OverlayEntry(
+        builder: (_) => const Stack(
+          fit: StackFit.expand,
+          children: [
+            ModalBarrier(dismissible: false, color: Color(0x66000000)),
+            Center(
+              child: CircularProgressIndicator(key: Key('inbox-ocr-loading')),
+            ),
+          ],
+        ),
+      );
+      Overlay.of(context, rootOverlay: true).insert(overlay);
+      loadingOverlay = overlay;
+
+      late final String text;
+      try {
+        final recognizer =
+            widget.recognizer ?? OcrService.instance.recognizeAsset;
+        text = await recognizer(assetId);
+      } catch (_) {
+        _showOcrMessage('文字识别失败，请重试');
+        return;
+      }
+      if (!mounted) return;
+
+      if (text.trim().isEmpty) {
+        _showOcrMessage('未识别到文字');
+        return;
+      }
+
+      final parsed = OcrParser.parse(text);
+      late final ItemModel draft;
+      try {
+        draft = await repository.createOcrDraftWithAttachment(
+          ocrText: text,
+          assetId: assetId,
+          title: parsed['title'] ?? '会议截图',
+        );
+      } catch (_) {
+        _showOcrMessage('保存识别结果失败，请重试');
+        return;
+      }
+      if (!mounted) return;
+
+      context.push('/ocr-confirm/${draft.id}');
+      _load();
+    } finally {
+      loadingOverlay?.remove();
+      _ocrInFlight = false;
+      if (mounted) setState(() {});
+    }
+  }
+
+  Future<String?> _chooseOcrAsset() async {
     final perm = await _photoPermissionHelper.requestImagePermission();
-    if (!mounted) return;
+    if (!mounted) return null;
     if (!_photoPermissionHelper.hasImageAccess(perm)) {
       await _showPhotoPermissionDialog();
-      return;
+      return null;
     }
-    final assetId = await Navigator.push<String>(
+    return Navigator.push<String>(
       context,
       MaterialPageRoute(builder: (_) => const GalleryPickerScreen()),
     );
-    if (assetId == null || !mounted) return;
+  }
 
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const Center(child: CircularProgressIndicator()),
-    );
-    final text = await OcrService.instance.recognizeAsset(assetId);
+  void _showOcrMessage(String message) {
     if (!mounted) return;
-    Navigator.pop(context);
-
-    final parsed = OcrParser.parse(text);
-    final app = context.read<AppState>();
-    final draft = await app.items.createDraft(
-      type: 'meeting',
-      title: parsed['title'] ?? '会议截图',
-      ocrText: text,
-    );
-    await app.items.addAttachment(
-      itemId: draft.id,
-      assetId: assetId,
-    );
-    if (!mounted) return;
-    context.push('/ocr-confirm/${draft.id}');
-    _load();
+    snack(context, message);
   }
 
   Future<void> _showPhotoPermissionDialog() async {
@@ -120,9 +189,7 @@ class _InboxScreenState extends State<InboxScreen> {
                   const SizedBox(height: 20),
                   const SectionHeader(title: '待处理'),
                   if (_items.isEmpty)
-                    const AppCard(
-                      child: Text('暂无待处理事项，可通过下方快捷入口添加'),
-                    )
+                    const AppCard(child: Text('暂无待处理事项，可通过下方快捷入口添加'))
                   else
                     ..._items.map(_buildItemCard),
                 ],
@@ -165,8 +232,21 @@ class _InboxScreenState extends State<InboxScreen> {
         ),
         child: Column(
           children: [
-            Text('$count', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: color)),
-            Text(label, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+            Text(
+              '$count',
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+                color: color,
+              ),
+            ),
+            Text(
+              label,
+              style: const TextStyle(
+                fontSize: 12,
+                color: AppColors.textSecondary,
+              ),
+            ),
           ],
         ),
       ),
@@ -176,15 +256,19 @@ class _InboxScreenState extends State<InboxScreen> {
   Widget _buildQuickActions() {
     return Row(
       children: [
-        _action(Icons.document_scanner, '截图导入', _pickAndOcr),
+        _action(
+          Icons.document_scanner,
+          '截图导入',
+          _ocrInFlight ? null : _pickAndOcr,
+        ),
         _action(Icons.mic_none, '语音', () => context.push('/voice')),
         _action(Icons.edit_note, '快录', () => context.push('/create')),
-        _action(Icons.photo_camera, '拍照识图', _pickAndOcr),
+        _action(Icons.photo_camera, '拍照识图', _ocrInFlight ? null : _pickAndOcr),
       ],
     );
   }
 
-  Widget _action(IconData icon, String label, VoidCallback onTap) {
+  Widget _action(IconData icon, String label, VoidCallback? onTap) {
     return Expanded(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -200,7 +284,12 @@ class _InboxScreenState extends State<InboxScreen> {
             ),
             child: Column(
               children: [
-                Icon(icon, color: AppColors.primary),
+                Icon(
+                  icon,
+                  color: onTap == null
+                      ? AppColors.textSecondary
+                      : AppColors.primary,
+                ),
                 const SizedBox(height: 6),
                 Text(label, style: const TextStyle(fontSize: 12)),
               ],
@@ -220,22 +309,35 @@ class _InboxScreenState extends State<InboxScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(item.title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
+            Text(
+              item.title,
+              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+            ),
             if (item.ocrText != null && item.ocrText!.isNotEmpty) ...[
               const SizedBox(height: 6),
               Text(
                 item.ocrText!.split('\n').first,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
+                style: const TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: 13,
+                ),
               ),
             ],
             const SizedBox(height: 8),
             Row(
               children: [
-                const Icon(Icons.hourglass_empty, size: 14, color: AppColors.accentOrange),
+                const Icon(
+                  Icons.hourglass_empty,
+                  size: 14,
+                  color: AppColors.accentOrange,
+                ),
                 const SizedBox(width: 4),
-                const Text('待确认', style: TextStyle(fontSize: 12, color: AppColors.accentOrange)),
+                const Text(
+                  '待确认',
+                  style: TextStyle(fontSize: 12, color: AppColors.accentOrange),
+                ),
                 const Spacer(),
                 TextButton(
                   onPressed: () => context.push('/ocr-confirm/${item.id}'),
