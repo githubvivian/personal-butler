@@ -60,13 +60,13 @@ class NotificationService {
     _ready = true;
   }
 
-  Future<void> requestAndroidPermission() async {
+  Future<bool?> requestAndroidPermission() async {
     if (!_ready) await init();
     final androidPlugin = _plugin
         .resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin
         >();
-    await androidPlugin?.requestNotificationsPermission();
+    return androidPlugin?.requestNotificationsPermission();
   }
 
   Future<void> scheduleItemReminder({

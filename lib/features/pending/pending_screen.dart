@@ -5,13 +5,68 @@ import 'package:provider/provider.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/models/models.dart';
 import '../../core/providers/app_state.dart';
+import '../../core/repositories/item_repository.dart';
+import '../../core/services/notification_permission_coordinator.dart';
 import '../widgets/common_widgets.dart';
 
+typedef PendingItemBuilder = Widget Function(
+  BuildContext context,
+  ItemModel item,
+  VoidCallback onPostpone,
+  VoidCallback onUpdateStatus,
+);
+
 class PendingScreen extends StatefulWidget {
-  const PendingScreen({super.key});
+  const PendingScreen({
+    super.key,
+    this.itemRepository,
+    this.notificationPermissionCoordinator,
+    this.itemBuilder,
+  });
+
+  final ItemRepository? itemRepository;
+  final NotificationPermissionCoordinator? notificationPermissionCoordinator;
+  final PendingItemBuilder? itemBuilder;
 
   @override
   State<PendingScreen> createState() => _PendingScreenState();
+}
+
+class PendingReminderActions {
+  const PendingReminderActions({
+    required this.itemRepository,
+    required this.notificationPermissionCoordinator,
+  });
+
+  final ItemRepository itemRepository;
+  final NotificationPermissionCoordinator notificationPermissionCoordinator;
+
+  Future<NotificationPermissionResult> postpone(ItemModel item) {
+    return _persist(
+      item.copyWith(
+        nextFollowUpAt: DateTime.now().add(const Duration(days: 7)),
+      ),
+    );
+  }
+
+  Future<NotificationPermissionResult> updateStatus(
+    ItemModel item,
+    String selected,
+  ) {
+    return _persist(
+      item.copyWith(
+        pendingStatus: selected,
+        status: selected == 'done' ? 'done' : 'active',
+      ),
+    );
+  }
+
+  Future<NotificationPermissionResult> _persist(ItemModel item) {
+    return notificationPermissionCoordinator.requestThenPersist(
+      requiresPermission: itemHasActiveReminder(item),
+      persist: () => itemRepository.save(item),
+    );
+  }
 }
 
 class _PendingScreenState extends State<PendingScreen> with SingleTickerProviderStateMixin {
@@ -33,10 +88,16 @@ class _PendingScreenState extends State<PendingScreen> with SingleTickerProvider
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
-    final app = context.read<AppState>();
-    _items = await app.items.getPendingItems(includeDone: _tab.index == 3);
-    setState(() => _loading = false);
+    if (mounted) setState(() => _loading = true);
+    final repository = widget.itemRepository ?? context.read<AppState>().items;
+    final items = await repository.getPendingItems(
+      includeDone: _tab.index == 3,
+    );
+    if (!mounted) return;
+    setState(() {
+      _items = items;
+      _loading = false;
+    });
   }
 
   List<ItemModel> get _filtered {
@@ -60,12 +121,19 @@ class _PendingScreenState extends State<PendingScreen> with SingleTickerProvider
         .label;
   }
 
+  PendingReminderActions get _actions => PendingReminderActions(
+    itemRepository: widget.itemRepository ?? context.read<AppState>().items,
+    notificationPermissionCoordinator:
+        widget.notificationPermissionCoordinator ??
+        NotificationPermissionCoordinator.instance,
+  );
+
   Future<void> _postpone(ItemModel item) async {
-    final app = context.read<AppState>();
-    await app.items.save(
-      item.copyWith(nextFollowUpAt: DateTime.now().add(const Duration(days: 7))),
-    );
-    _load();
+    final permissionResult = await _actions.postpone(item);
+    if (!mounted) return;
+    final warning = permissionResult.warningMessage;
+    if (warning != null) snack(context, warning);
+    await _load();
   }
 
   Future<void> _updateStatus(ItemModel item) async {
@@ -84,15 +152,12 @@ class _PendingScreenState extends State<PendingScreen> with SingleTickerProvider
         ),
       ),
     );
-    if (selected == null) return;
-    final app = context.read<AppState>();
-    await app.items.save(
-      item.copyWith(
-        pendingStatus: selected,
-        status: selected == 'done' ? 'done' : item.status,
-      ),
-    );
-    _load();
+    if (selected == null || !mounted) return;
+    final permissionResult = await _actions.updateStatus(item, selected);
+    if (!mounted) return;
+    final warning = permissionResult.warningMessage;
+    if (warning != null) snack(context, warning);
+    await _load();
   }
 
   @override
@@ -124,7 +189,19 @@ class _PendingScreenState extends State<PendingScreen> with SingleTickerProvider
                   : ListView.builder(
                       padding: const EdgeInsets.all(16),
                       itemCount: _filtered.length,
-                      itemBuilder: (_, i) => _card(_filtered[i]),
+                      itemBuilder: (context, i) {
+                        final item = _filtered[i];
+                        final itemBuilder = widget.itemBuilder;
+                        if (itemBuilder != null) {
+                          return itemBuilder(
+                            context,
+                            item,
+                            () => _postpone(item),
+                            () => _updateStatus(item),
+                          );
+                        }
+                        return _card(item);
+                      },
                     ),
             ),
     );

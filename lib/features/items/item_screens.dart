@@ -6,10 +6,19 @@ import 'package:uuid/uuid.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/models/models.dart';
 import '../../core/providers/app_state.dart';
+import '../../core/repositories/item_repository.dart';
+import '../../core/services/notification_permission_coordinator.dart';
 import '../widgets/common_widgets.dart';
 
 class CreateItemScreen extends StatefulWidget {
-  const CreateItemScreen({super.key});
+  const CreateItemScreen({
+    super.key,
+    this.itemRepository,
+    this.notificationPermissionCoordinator,
+  });
+
+  final ItemRepository? itemRepository;
+  final NotificationPermissionCoordinator? notificationPermissionCoordinator;
 
   @override
   State<CreateItemScreen> createState() => _CreateItemScreenState();
@@ -58,7 +67,6 @@ class _CreateItemScreenState extends State<CreateItemScreen> {
       snack(context, '请输入标题');
       return;
     }
-    final app = context.read<AppState>();
     final isPending = _type == 'reimbursement' || _type == 'review';
     final now = DateTime.now();
     final item = ItemModel(
@@ -77,9 +85,16 @@ class _CreateItemScreenState extends State<CreateItemScreen> {
       createdAt: now,
       updatedAt: now,
     );
-    await app.items.save(item);
+    final repository = widget.itemRepository ?? context.read<AppState>().items;
+    final permissionResult =
+        await (widget.notificationPermissionCoordinator ??
+                NotificationPermissionCoordinator.instance)
+            .requestThenPersist(
+              requiresPermission: itemHasActiveReminder(item),
+              persist: () => repository.save(item),
+            );
     if (!mounted) return;
-    snack(context, '已保存');
+    snack(context, permissionResult.warningMessage ?? '已保存');
     context.pop();
   }
 

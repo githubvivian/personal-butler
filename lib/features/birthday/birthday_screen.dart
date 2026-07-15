@@ -4,11 +4,20 @@ import 'package:provider/provider.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/models/models.dart';
 import '../../core/providers/app_state.dart';
+import '../../core/repositories/other_repositories.dart';
+import '../../core/services/notification_permission_coordinator.dart';
 import '../../core/utils/lunar_date_helper.dart';
 import '../widgets/common_widgets.dart';
 
 class BirthdayScreen extends StatefulWidget {
-  const BirthdayScreen({super.key});
+  const BirthdayScreen({
+    super.key,
+    this.birthdayRepository,
+    this.notificationPermissionCoordinator,
+  });
+
+  final BirthdayRepository? birthdayRepository;
+  final NotificationPermissionCoordinator? notificationPermissionCoordinator;
 
   @override
   State<BirthdayScreen> createState() => _BirthdayScreenState();
@@ -24,8 +33,11 @@ class _BirthdayScreenState extends State<BirthdayScreen> {
   }
 
   Future<void> _load() async {
-    _items = await context.read<AppState>().birthdays.getAll();
-    setState(() {});
+    final repository =
+        widget.birthdayRepository ?? context.read<AppState>().birthdays;
+    final items = await repository.getAll();
+    if (!mounted) return;
+    setState(() => _items = items);
   }
 
   Future<void> _add() async {
@@ -79,15 +91,28 @@ class _BirthdayScreenState extends State<BirthdayScreen> {
         ),
       ),
     );
-    if (ok != true || name.text.trim().isEmpty) return;
-    await context.read<AppState>().birthdays.create(
-          name: name.text.trim(),
-          relation: relation.text.trim(),
-          isLunar: isLunar,
-          month: month,
-          day: day,
-        );
-    _load();
+    if (!mounted || ok != true || name.text.trim().isEmpty) return;
+    final repository =
+        widget.birthdayRepository ?? context.read<AppState>().birthdays;
+    final permissionResult =
+        await (widget.notificationPermissionCoordinator ??
+                NotificationPermissionCoordinator.instance)
+            .requestThenPersist(
+              requiresPermission: true,
+              persist: () async {
+                await repository.create(
+                  name: name.text.trim(),
+                  relation: relation.text.trim(),
+                  isLunar: isLunar,
+                  month: month,
+                  day: day,
+                );
+              },
+            );
+    if (!mounted) return;
+    final warning = permissionResult.warningMessage;
+    if (warning != null) snack(context, warning);
+    await _load();
   }
 
   @override

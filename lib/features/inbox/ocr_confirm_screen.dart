@@ -4,14 +4,23 @@ import 'package:go_router/go_router.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:provider/provider.dart';
 import '../../core/constants/app_constants.dart';
-import '../../core/models/models.dart';
 import '../../core/providers/app_state.dart';
+import '../../core/repositories/item_repository.dart';
+import '../../core/services/notification_permission_coordinator.dart';
 import '../../core/utils/ocr_service.dart';
 import '../widgets/common_widgets.dart';
 
 class OcrConfirmScreen extends StatefulWidget {
   final String itemId;
-  const OcrConfirmScreen({super.key, required this.itemId});
+  final ItemRepository? itemRepository;
+  final NotificationPermissionCoordinator? notificationPermissionCoordinator;
+
+  const OcrConfirmScreen({
+    super.key,
+    required this.itemId,
+    this.itemRepository,
+    this.notificationPermissionCoordinator,
+  });
 
   @override
   State<OcrConfirmScreen> createState() => _OcrConfirmScreenState();
@@ -34,8 +43,8 @@ class _OcrConfirmScreenState extends State<OcrConfirmScreen> {
   }
 
   Future<void> _load() async {
-    final app = context.read<AppState>();
-    final item = await app.items.getById(widget.itemId);
+    final repository = widget.itemRepository ?? context.read<AppState>().items;
+    final item = await repository.getById(widget.itemId);
     if (item == null) return;
     final parsed = OcrParser.parse(item.ocrText ?? '');
     _title.text = item.title;
@@ -47,13 +56,13 @@ class _OcrConfirmScreenState extends State<OcrConfirmScreen> {
     } else if (parsed['startAt'] != null) {
       _startAt = DateTime.tryParse(parsed['startAt']!);
     }
-    final attachments = await app.items.getAttachments(widget.itemId);
+    final attachments = await repository.getAttachments(widget.itemId);
     if (attachments.isNotEmpty) {
       _assetId = attachments.first.assetId;
       final asset = await AssetEntity.fromId(_assetId!);
       _thumb = await asset?.thumbnailDataWithSize(const ThumbnailSize(400, 400));
     }
-    setState(() => _loading = false);
+    if (mounted) setState(() => _loading = false);
   }
 
   Future<void> _pickTime() async {
@@ -75,8 +84,8 @@ class _OcrConfirmScreenState extends State<OcrConfirmScreen> {
   }
 
   Future<void> _confirm() async {
-    final app = context.read<AppState>();
-    final item = await app.items.getById(widget.itemId);
+    final repository = widget.itemRepository ?? context.read<AppState>().items;
+    final item = await repository.getById(widget.itemId);
     if (item == null) return;
 
     final isPending = _type == 'reimbursement' || _type == 'review';
@@ -93,9 +102,18 @@ class _OcrConfirmScreenState extends State<OcrConfirmScreen> {
           : null,
       status: isPending ? 'active' : item.status,
     );
-    await app.items.save(updated);
+    final permissionResult =
+        await (widget.notificationPermissionCoordinator ??
+                NotificationPermissionCoordinator.instance)
+            .requestThenPersist(
+              requiresPermission: itemHasActiveReminder(updated),
+              persist: () => repository.save(updated),
+            );
     if (!mounted) return;
-    snack(context, isPending ? '已加入悬而未决' : '已加入日历');
+    snack(
+      context,
+      permissionResult.warningMessage ?? (isPending ? '已加入悬而未决' : '已加入日历'),
+    );
     context.go(isPending ? '/pending' : '/calendar');
   }
 
