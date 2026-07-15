@@ -27,6 +27,19 @@ void main() {
     await database.close();
   });
 
+  group('ItemRepository.getById', () {
+    test('returns null after the item is soft deleted', () async {
+      const itemId = 'item-get-by-id-soft-deleted';
+      await database.insert('items', _buildItem(itemId).toMap());
+
+      expect(await repository.getById(itemId), isNotNull);
+
+      await repository.softDelete(itemId);
+
+      expect(await repository.getById(itemId), isNull);
+    });
+  });
+
   group('ItemRepository.createOcrDraftWithAttachment', () {
     test('creates one meeting inbox draft and its attachment', () async {
       const ocrText = 'Quarterly planning\nTuesday at 10:00';

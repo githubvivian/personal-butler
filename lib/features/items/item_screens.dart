@@ -170,9 +170,17 @@ class _CreateItemScreenState extends State<CreateItemScreen> {
   }
 }
 
+enum _ItemDetailLoadState { loading, ready, notFound, failed }
+
 class ItemDetailScreen extends StatefulWidget {
   final String itemId;
-  const ItemDetailScreen({super.key, required this.itemId});
+  final ItemRepository? itemRepository;
+
+  const ItemDetailScreen({
+    super.key,
+    required this.itemId,
+    this.itemRepository,
+  });
 
   @override
   State<ItemDetailScreen> createState() => _ItemDetailScreenState();
@@ -180,6 +188,7 @@ class ItemDetailScreen extends StatefulWidget {
 
 class _ItemDetailScreenState extends State<ItemDetailScreen> {
   ItemModel? _item;
+  _ItemDetailLoadState _loadState = _ItemDetailLoadState.loading;
 
   @override
   void initState() {
@@ -188,22 +197,41 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
   }
 
   Future<void> _load() async {
-    _item = await context.read<AppState>().items.getById(widget.itemId);
-    setState(() {});
+    final repository = widget.itemRepository ?? context.read<AppState>().items;
+    setState(() {
+      _item = null;
+      _loadState = _ItemDetailLoadState.loading;
+    });
+    try {
+      final item = await repository.getById(widget.itemId);
+      if (!mounted) return;
+      setState(() {
+        _item = item;
+        _loadState = item == null
+            ? _ItemDetailLoadState.notFound
+            : _ItemDetailLoadState.ready;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _item = null;
+        _loadState = _ItemDetailLoadState.failed;
+      });
+    }
   }
 
   Future<void> _delete() async {
+    final repository = widget.itemRepository ?? context.read<AppState>().items;
     final action = await ConfirmDeleteDialog.show(
       context,
       title: '删除事项',
       message: '移入已删除可保留记录；彻底删除不可恢复。相册原图不会被删除。',
     );
-    if (action == null) return;
-    final app = context.read<AppState>();
+    if (!mounted || action == null) return;
     if (action == 'hard') {
-      await app.items.hardDelete(widget.itemId);
+      await repository.hardDelete(widget.itemId);
     } else {
-      await app.items.softDelete(widget.itemId);
+      await repository.softDelete(widget.itemId);
     }
     if (!mounted) return;
     context.pop();
@@ -211,43 +239,64 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_item == null) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
-    final item = _item!;
     return Scaffold(
       appBar: AppBar(
         title: const Text('事项详情'),
-        actions: [
-          IconButton(onPressed: _delete, icon: const Icon(Icons.delete_outline)),
-        ],
+        actions: _loadState == _ItemDetailLoadState.ready
+            ? [
+                IconButton(
+                  onPressed: _delete,
+                  icon: const Icon(Icons.delete_outline),
+                ),
+              ]
+            : null,
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          AppCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(item.title, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
-                OwnerChip(ownerId: item.owner),
-                const SizedBox(height: 16),
-                _row(Icons.category, '类型', AppConstants.itemTypes.firstWhere((t) => t.id == item.type, orElse: () => (id: item.type, label: item.type, icon: Icons.label)).label),
-                if (item.startAt != null)
-                  _row(Icons.access_time, '时间', DateFormat('yyyy-MM-dd HH:mm').format(item.startAt!)),
-                if (item.location != null) _row(Icons.place, '地点', item.location!),
-                if (item.participants != null) _row(Icons.people, '参与人', item.participants!),
-                if (item.amount != null) _row(Icons.payments, '金额', '¥${item.amount!.toStringAsFixed(2)}'),
-                if (item.pendingStatus != null)
-                  _row(Icons.pending, '流程状态', AppConstants.pendingStatuses.firstWhere((s) => s.id == item.pendingStatus, orElse: () => (id: item.pendingStatus!, label: item.pendingStatus!)).label),
-                if (item.notes != null) _row(Icons.notes, '备注', item.notes!),
-                _row(Icons.notifications, '提醒', '提前 ${item.reminderMinutes} 分钟'),
-              ],
-            ),
+      body: switch (_loadState) {
+        _ItemDetailLoadState.loading => const Center(
+          child: CircularProgressIndicator(),
+        ),
+        _ItemDetailLoadState.notFound => const Center(child: Text('事项不存在或已删除')),
+        _ItemDetailLoadState.failed => Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('事项加载失败，请重试'),
+              const SizedBox(height: 12),
+              FilledButton(onPressed: _load, child: const Text('重试')),
+            ],
           ),
-        ],
-      ),
+        ),
+        _ItemDetailLoadState.ready => _buildReady(_item!),
+      },
+    );
+  }
+
+  Widget _buildReady(ItemModel item) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        AppCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(item.title, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              OwnerChip(ownerId: item.owner),
+              const SizedBox(height: 16),
+              _row(Icons.category, '类型', AppConstants.itemTypes.firstWhere((t) => t.id == item.type, orElse: () => (id: item.type, label: item.type, icon: Icons.label)).label),
+              if (item.startAt != null)
+                _row(Icons.access_time, '时间', DateFormat('yyyy-MM-dd HH:mm').format(item.startAt!)),
+              if (item.location != null) _row(Icons.place, '地点', item.location!),
+              if (item.participants != null) _row(Icons.people, '参与人', item.participants!),
+              if (item.amount != null) _row(Icons.payments, '金额', '¥${item.amount!.toStringAsFixed(2)}'),
+              if (item.pendingStatus != null)
+                _row(Icons.pending, '流程状态', AppConstants.pendingStatuses.firstWhere((s) => s.id == item.pendingStatus, orElse: () => (id: item.pendingStatus!, label: item.pendingStatus!)).label),
+              if (item.notes != null) _row(Icons.notes, '备注', item.notes!),
+              _row(Icons.notifications, '提醒', '提前 ${item.reminderMinutes} 分钟'),
+            ],
+          ),
+        ),
+      ],
     );
   }
 

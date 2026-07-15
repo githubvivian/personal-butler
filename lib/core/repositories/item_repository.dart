@@ -95,7 +95,11 @@ class ItemRepository {
 
   Future<ItemModel?> getById(String id) async {
     final db = await _databaseProvider();
-    final rows = await db.query('items', where: 'id = ?', whereArgs: [id]);
+    final rows = await db.query(
+      'items',
+      where: 'id = ? AND is_deleted = 0',
+      whereArgs: [id],
+    );
     if (rows.isEmpty) return null;
     return ItemModel.fromMap(rows.first);
   }
