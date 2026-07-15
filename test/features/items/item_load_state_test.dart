@@ -11,6 +11,124 @@ import 'package:personal_butler/features/items/item_screens.dart';
 
 void main() {
   group('ItemDetailScreen load state', () {
+    testWidgets('late A load cannot replace B after itemId changes', (
+      tester,
+    ) async {
+      final aResult = Completer<ItemModel?>();
+      final bResult = Completer<ItemModel?>();
+      final repository = _FakeItemRepository(
+        getByIdResults: [aResult.future, bResult.future],
+      );
+      final itemId = ValueNotifier<String>('detail-a');
+      addTearDown(itemId.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ValueListenableBuilder<String>(
+            valueListenable: itemId,
+            builder: (_, id, _) => ItemDetailScreen(
+              key: const ValueKey('detail-screen'),
+              itemId: id,
+              itemRepository: repository,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      itemId.value = 'detail-b';
+      await tester.pump();
+
+      bResult.complete(_item('detail-b'));
+      await tester.pump();
+
+      expect(find.text('Test item detail-b'), findsOneWidget);
+      expect(find.text('Test item detail-a'), findsNothing);
+
+      aResult.complete(_item('detail-a'));
+      await tester.pump();
+
+      expect(find.text('Test item detail-b'), findsOneWidget);
+      expect(find.text('Test item detail-a'), findsNothing);
+      expect(repository.getByIdCallIds, ['detail-a', 'detail-b']);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('changing the injected repository reloads the current item', (
+      tester,
+    ) async {
+      const itemId = 'detail-repository-change';
+      final firstRepository = _FakeItemRepository(
+        getByIdResults: [_item(itemId, title: 'First repository item')],
+      );
+      final secondRepository = _FakeItemRepository(
+        getByIdResults: [_item(itemId, title: 'Second repository item')],
+      );
+      final repository = ValueNotifier<ItemRepository>(firstRepository);
+      addTearDown(repository.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ValueListenableBuilder<ItemRepository>(
+            valueListenable: repository,
+            builder: (_, value, _) => ItemDetailScreen(
+              key: const ValueKey('detail-screen'),
+              itemId: itemId,
+              itemRepository: value,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('First repository item'), findsOneWidget);
+
+      repository.value = secondRepository;
+      await tester.pumpAndSettle();
+
+      expect(find.text('Second repository item'), findsOneWidget);
+      expect(find.text('First repository item'), findsNothing);
+      expect(secondRepository.getByIdCallIds, [itemId]);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+      'a delete dialog opened for A cannot delete B after an update',
+      (tester) async {
+        final repository = _FakeItemRepository(
+          getByIdResults: [_item('delete-a'), _item('delete-b')],
+        );
+        final itemId = ValueNotifier<String>('delete-a');
+        addTearDown(itemId.dispose);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: ValueListenableBuilder<String>(
+              valueListenable: itemId,
+              builder: (_, id, _) => ItemDetailScreen(
+                key: const ValueKey('detail-screen'),
+                itemId: id,
+                itemRepository: repository,
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.byIcon(Icons.delete_outline));
+        await tester.pumpAndSettle();
+
+        itemId.value = 'delete-b';
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('移入已删除'));
+        await tester.pumpAndSettle();
+
+        expect(repository.softDeletedIds, isEmpty);
+        expect(repository.hardDeletedIds, isEmpty);
+        expect(find.text('Test item delete-b'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
     testWidgets('missing item ends loading with a not-found message', (
       tester,
     ) async {
@@ -85,6 +203,249 @@ void main() {
   });
 
   group('OcrConfirmScreen load and save state', () {
+    testWidgets('late A load cannot replace B after itemId changes', (
+      tester,
+    ) async {
+      final aResult = Completer<ItemModel?>();
+      final bResult = Completer<ItemModel?>();
+      final repository = _FakeItemRepository(
+        getByIdResults: [aResult.future, bResult.future],
+      );
+      final itemId = ValueNotifier<String>('ocr-a');
+      addTearDown(itemId.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ValueListenableBuilder<String>(
+            valueListenable: itemId,
+            builder: (_, id, _) => OcrConfirmScreen(
+              key: const ValueKey('ocr-screen'),
+              itemId: id,
+              itemRepository: repository,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      itemId.value = 'ocr-b';
+      await tester.pump();
+
+      bResult.complete(_item('ocr-b', ocrText: 'B OCR text'));
+      await tester.pump();
+
+      expect(find.text('Test item ocr-b'), findsOneWidget);
+      expect(find.text('Test item ocr-a'), findsNothing);
+
+      aResult.complete(_item('ocr-a', ocrText: 'A OCR text'));
+      await tester.pump();
+
+      expect(find.text('Test item ocr-b'), findsOneWidget);
+      expect(find.text('Test item ocr-a'), findsNothing);
+      expect(repository.getByIdCallIds, ['ocr-a', 'ocr-b']);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('changing the injected repository reloads the current form', (
+      tester,
+    ) async {
+      const itemId = 'ocr-repository-change';
+      final firstRepository = _FakeItemRepository(
+        getByIdResults: [_item(itemId, title: 'First repository form')],
+      );
+      final secondRepository = _FakeItemRepository(
+        getByIdResults: [_item(itemId, title: 'Second repository form')],
+      );
+      final repository = ValueNotifier<ItemRepository>(firstRepository);
+      addTearDown(repository.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ValueListenableBuilder<ItemRepository>(
+            valueListenable: repository,
+            builder: (_, value, _) => OcrConfirmScreen(
+              key: const ValueKey('ocr-screen'),
+              itemId: itemId,
+              itemRepository: value,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('First repository form'), findsOneWidget);
+
+      repository.value = secondRepository;
+      await tester.pumpAndSettle();
+
+      expect(find.text('Second repository form'), findsOneWidget);
+      expect(find.text('First repository form'), findsNothing);
+      expect(secondRepository.getByIdCallIds, [itemId]);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a date picker opened for A cannot change B after an update', (
+      tester,
+    ) async {
+      final aStartAt = DateTime(2026, 7, 15, 8, 30);
+      final bStartAt = DateTime(2026, 8, 20, 9, 45);
+      final repository = _FakeItemRepository(
+        getByIdResults: [
+          _item('picker-a', startAt: aStartAt),
+          _item('picker-b', startAt: bStartAt),
+        ],
+      );
+      final itemId = ValueNotifier<String>('picker-a');
+      addTearDown(itemId.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ValueListenableBuilder<String>(
+            valueListenable: itemId,
+            builder: (_, id, _) => OcrConfirmScreen(
+              key: const ValueKey('ocr-screen'),
+              itemId: id,
+              itemRepository: repository,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(ListTile, '时间'));
+      await tester.pumpAndSettle();
+
+      itemId.value = 'picker-b';
+      await tester.pumpAndSettle();
+      expect(
+        find.text('2026-08-20 09:45', skipOffstage: false),
+        findsOneWidget,
+      );
+      expect(repository.getByIdCallIds, ['picker-a', 'picker-b']);
+
+      await tester.tap(find.text('OK'));
+      await tester.pumpAndSettle();
+      if (find.byType(TimePickerDialog).evaluate().isNotEmpty) {
+        await tester.tap(find.text('OK'));
+        await tester.pumpAndSettle();
+      }
+
+      expect(find.text('2026-08-20 09:45'), findsOneWidget);
+      expect(find.text('2026-07-15 09:45'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+      'confirm for A stops if the screen switches to B while querying',
+      (tester) async {
+        final confirmResult = Completer<ItemModel?>();
+        final repository = _FakeItemRepository(
+          getByIdResults: [
+            _item('confirm-a'),
+            confirmResult.future,
+            _item('confirm-b'),
+          ],
+        );
+        final itemId = ValueNotifier<String>('confirm-a');
+        addTearDown(itemId.dispose);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: ValueListenableBuilder<String>(
+              valueListenable: itemId,
+              builder: (_, id, _) => OcrConfirmScreen(
+                key: const ValueKey('ocr-screen'),
+                itemId: id,
+                itemRepository: repository,
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        await tester.enterText(find.byType(TextField).first, 'Edited A title');
+        await tester.tap(find.byType(FilledButton));
+        await tester.pump();
+
+        itemId.value = 'confirm-b';
+        await tester.pumpAndSettle();
+        expect(find.text('Test item confirm-b'), findsOneWidget);
+
+        confirmResult.complete(_item('confirm-a'));
+        await tester.pumpAndSettle();
+
+        expect(repository.saveCalls, 0);
+        expect(find.text('Test item confirm-b'), findsOneWidget);
+        expect(find.text('Edited A title'), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'completed A save cannot navigate away from the updated B form',
+      (tester) async {
+        final saveGate = Completer<void>();
+        final repository = _FakeItemRepository(
+          getByIdResults: [
+            _item('saving-a'),
+            _item('saving-a'),
+            _item('saving-b'),
+          ],
+          saveGate: saveGate,
+        );
+        final itemId = ValueNotifier<String>('saving-a');
+        addTearDown(itemId.dispose);
+        final router = GoRouter(
+          initialLocation: '/ocr',
+          routes: [
+            GoRoute(
+              path: '/ocr',
+              builder: (_, _) => ValueListenableBuilder<String>(
+                valueListenable: itemId,
+                builder: (_, id, _) => OcrConfirmScreen(
+                  key: const ValueKey('ocr-screen'),
+                  itemId: id,
+                  itemRepository: repository,
+                  notificationPermissionCoordinator:
+                      NotificationPermissionCoordinator(
+                        requestPermission: () async => true,
+                      ),
+                ),
+              ),
+            ),
+            GoRoute(
+              path: '/calendar',
+              builder: (_, _) => const Scaffold(body: Text('calendar-target')),
+            ),
+          ],
+        );
+        addTearDown(router.dispose);
+
+        await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+        await tester.pumpAndSettle();
+
+        await tester.enterText(
+          find.byType(TextField).first,
+          'Saved A snapshot',
+        );
+        await tester.tap(find.byType(FilledButton));
+        await tester.pump();
+        expect(repository.saveCalls, 1);
+
+        itemId.value = 'saving-b';
+        await tester.pumpAndSettle();
+        expect(find.text('Test item saving-b'), findsOneWidget);
+
+        saveGate.complete();
+        await tester.pumpAndSettle();
+
+        expect(find.text('calendar-target'), findsNothing);
+        expect(find.text('Test item saving-b'), findsOneWidget);
+        expect(repository.savedItems.single.id, 'saving-a');
+        expect(repository.savedItems.single.title, 'Saved A snapshot');
+        expect(tester.takeException(), isNull);
+      },
+    );
+
     testWidgets('missing item ends loading with a not-found message', (
       tester,
     ) async {
@@ -304,11 +665,15 @@ class _FakeItemRepository extends ItemRepository {
   final Object? saveError;
   int getByIdCalls = 0;
   int saveCalls = 0;
+  final List<String> getByIdCallIds = [];
   final List<ItemModel> savedItems = [];
+  final List<String> softDeletedIds = [];
+  final List<String> hardDeletedIds = [];
 
   @override
   Future<ItemModel?> getById(String id) async {
     getByIdCalls += 1;
+    getByIdCallIds.add(id);
     if (_getByIdResults.isEmpty) {
       throw StateError('unexpected getById call for $id');
     }
@@ -336,6 +701,16 @@ class _FakeItemRepository extends ItemRepository {
     final gate = saveGate;
     if (gate != null) await gate.future;
   }
+
+  @override
+  Future<void> softDelete(String id) async {
+    softDeletedIds.add(id);
+  }
+
+  @override
+  Future<void> hardDelete(String id) async {
+    hardDeletedIds.add(id);
+  }
 }
 
 class _Failure {
@@ -344,13 +719,19 @@ class _Failure {
   final Object error;
 }
 
-ItemModel _item(String id, {String? ocrText}) {
+ItemModel _item(
+  String id, {
+  String? title,
+  String? ocrText,
+  DateTime? startAt,
+}) {
   final now = DateTime.utc(2026, 7, 15, 8, 30);
   return ItemModel(
     id: id,
     type: 'meeting',
-    title: 'Test item $id',
+    title: title ?? 'Test item $id',
     ocrText: ocrText,
+    startAt: startAt,
     inboxStatus: 'inbox',
     createdAt: now,
     updatedAt: now,

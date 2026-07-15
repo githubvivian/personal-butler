@@ -35,8 +35,10 @@ class _OcrConfirmScreenState extends State<OcrConfirmScreen> {
   DateTime? _startAt;
   String _type = 'meeting';
   Uint8List? _thumb;
+  String? _loadedItemId;
   _OcrConfirmLoadState _loadState = _OcrConfirmLoadState.loading;
   bool _saving = false;
+  int _loadGeneration = 0;
 
   @override
   void initState() {
@@ -44,16 +46,34 @@ class _OcrConfirmScreenState extends State<OcrConfirmScreen> {
     _load();
   }
 
+  @override
+  void didUpdateWidget(covariant OcrConfirmScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.itemId != widget.itemId ||
+        oldWidget.itemRepository != widget.itemRepository) {
+      _load();
+    }
+  }
+
   Future<void> _load() async {
+    final generation = ++_loadGeneration;
+    final itemId = widget.itemId;
     final repository = widget.itemRepository ?? context.read<AppState>().items;
+    _title.clear();
+    _location.clear();
+    _notes.clear();
     setState(() {
+      _loadedItemId = null;
+      _type = 'meeting';
+      _startAt = null;
       _thumb = null;
+      _saving = false;
       _loadState = _OcrConfirmLoadState.loading;
     });
     try {
-      final item = await repository.getById(widget.itemId);
-      if (!mounted) return;
-      if (item == null) {
+      final item = await repository.getById(itemId);
+      if (!_isCurrentLoad(generation, itemId)) return;
+      if (item == null || item.id != itemId) {
         setState(() => _loadState = _OcrConfirmLoadState.notFound);
         return;
       }
@@ -67,46 +87,76 @@ class _OcrConfirmScreenState extends State<OcrConfirmScreen> {
       if (_startAt == null && parsed['startAt'] != null) {
         _startAt = DateTime.tryParse(parsed['startAt']!);
       }
-      setState(() => _loadState = _OcrConfirmLoadState.ready);
+      setState(() {
+        _loadedItemId = itemId;
+        _loadState = _OcrConfirmLoadState.ready;
+      });
 
-      await _loadPreview(repository);
-      if (!mounted) return;
+      await _loadPreview(repository, generation, itemId);
     } catch (_) {
-      if (!mounted) return;
-      setState(() => _loadState = _OcrConfirmLoadState.failed);
+      if (!_isCurrentLoad(generation, itemId)) return;
+      setState(() {
+        _loadedItemId = null;
+        _loadState = _OcrConfirmLoadState.failed;
+      });
     }
   }
 
-  Future<void> _loadPreview(ItemRepository repository) async {
+  bool _isCurrentLoad(int generation, String itemId) {
+    return mounted && generation == _loadGeneration && widget.itemId == itemId;
+  }
+
+  bool _isCurrentOperation(int generation, String itemId) {
+    return _isCurrentLoad(generation, itemId) &&
+        _loadState == _OcrConfirmLoadState.ready &&
+        _loadedItemId == itemId;
+  }
+
+  Future<void> _loadPreview(
+    ItemRepository repository,
+    int generation,
+    String itemId,
+  ) async {
     try {
-      final attachments = await repository.getAttachments(widget.itemId);
-      if (!mounted || attachments.isEmpty) return;
+      final attachments = await repository.getAttachments(itemId);
+      if (!_isCurrentLoad(generation, itemId) || attachments.isEmpty) return;
       final asset = await AssetEntity.fromId(attachments.first.assetId);
-      if (!mounted || asset == null) return;
+      if (!_isCurrentLoad(generation, itemId) || asset == null) return;
       final thumb = await asset.thumbnailDataWithSize(
         const ThumbnailSize(400, 400),
       );
-      if (!mounted || thumb == null) return;
+      if (!_isCurrentLoad(generation, itemId) || thumb == null) return;
       setState(() => _thumb = thumb);
     } catch (_) {
-      if (!mounted) return;
+      if (!_isCurrentLoad(generation, itemId)) return;
       setState(() => _thumb = null);
     }
   }
 
   Future<void> _pickTime() async {
+    final generation = _loadGeneration;
+    final itemId = widget.itemId;
+    if (!_isCurrentOperation(generation, itemId)) return;
     final date = await showDatePicker(
       context: context,
       initialDate: _startAt ?? DateTime.now(),
       firstDate: DateTime(2020),
       lastDate: DateTime(2100),
     );
-    if (date == null || !mounted) return;
+    if (date == null ||
+        !mounted ||
+        !_isCurrentOperation(generation, itemId)) {
+      return;
+    }
     final time = await showTimePicker(
       context: context,
       initialTime: TimeOfDay.fromDateTime(_startAt ?? DateTime.now()),
     );
-    if (time == null || !mounted) return;
+    if (time == null ||
+        !mounted ||
+        !_isCurrentOperation(generation, itemId)) {
+      return;
+    }
     setState(() {
       _startAt = DateTime(
         date.year,
@@ -119,7 +169,16 @@ class _OcrConfirmScreenState extends State<OcrConfirmScreen> {
   }
 
   Future<void> _confirm() async {
-    if (_saving || _loadState != _OcrConfirmLoadState.ready) return;
+    final generation = _loadGeneration;
+    final itemId = widget.itemId;
+    if (_saving || !_isCurrentOperation(generation, itemId)) return;
+    final form = (
+      type: _type,
+      title: _title.text.trim(),
+      location: _location.text.trim(),
+      notes: _notes.text.trim(),
+      startAt: _startAt,
+    );
     setState(() => _saving = true);
 
     final repository = widget.itemRepository ?? context.read<AppState>().items;
@@ -127,21 +186,21 @@ class _OcrConfirmScreenState extends State<OcrConfirmScreen> {
         widget.notificationPermissionCoordinator ??
         NotificationPermissionCoordinator.instance;
     try {
-      final item = await repository.getById(widget.itemId);
-      if (!mounted) return;
-      if (item == null) {
+      final item = await repository.getById(itemId);
+      if (!mounted || !_isCurrentOperation(generation, itemId)) return;
+      if (item == null || item.id != itemId) {
         setState(() => _saving = false);
         snack(context, '事项不存在或已删除');
         return;
       }
 
-      final isPending = _type == 'reimbursement' || _type == 'review';
+      final isPending = form.type == 'reimbursement' || form.type == 'review';
       final updated = item.copyWith(
-        type: _type,
-        title: _title.text.trim(),
-        location: _location.text.trim().isEmpty ? null : _location.text.trim(),
-        notes: _notes.text.trim().isEmpty ? null : _notes.text.trim(),
-        startAt: _startAt,
+        type: form.type,
+        title: form.title,
+        location: form.location.isEmpty ? null : form.location,
+        notes: form.notes.isEmpty ? null : form.notes,
+        startAt: form.startAt,
         inboxStatus: 'confirmed',
         pendingStatus: isPending ? (item.pendingStatus ?? 'submitted') : null,
         nextFollowUpAt: isPending
@@ -152,9 +211,12 @@ class _OcrConfirmScreenState extends State<OcrConfirmScreen> {
       );
       final permissionResult = await permissionCoordinator.requestThenPersist(
         requiresPermission: itemHasActiveReminder(updated),
-        persist: () => repository.save(updated),
+        persist: () async {
+          if (!_isCurrentOperation(generation, itemId)) return;
+          await repository.save(updated);
+        },
       );
-      if (!mounted) return;
+      if (!mounted || !_isCurrentOperation(generation, itemId)) return;
       setState(() => _saving = false);
       snack(
         context,
@@ -162,7 +224,7 @@ class _OcrConfirmScreenState extends State<OcrConfirmScreen> {
       );
       context.go(isPending ? '/pending' : '/calendar');
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || !_isCurrentOperation(generation, itemId)) return;
       setState(() => _saving = false);
       snack(context, '保存失败，请重试');
     }

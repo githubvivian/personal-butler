@@ -189,6 +189,7 @@ class ItemDetailScreen extends StatefulWidget {
 class _ItemDetailScreenState extends State<ItemDetailScreen> {
   ItemModel? _item;
   _ItemDetailLoadState _loadState = _ItemDetailLoadState.loading;
+  int _loadGeneration = 0;
 
   @override
   void initState() {
@@ -196,15 +197,26 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
     _load();
   }
 
+  @override
+  void didUpdateWidget(covariant ItemDetailScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.itemId != widget.itemId ||
+        oldWidget.itemRepository != widget.itemRepository) {
+      _load();
+    }
+  }
+
   Future<void> _load() async {
+    final generation = ++_loadGeneration;
+    final itemId = widget.itemId;
     final repository = widget.itemRepository ?? context.read<AppState>().items;
     setState(() {
       _item = null;
       _loadState = _ItemDetailLoadState.loading;
     });
     try {
-      final item = await repository.getById(widget.itemId);
-      if (!mounted) return;
+      final item = await repository.getById(itemId);
+      if (!_isCurrentLoad(generation, itemId)) return;
       setState(() {
         _item = item;
         _loadState = item == null
@@ -212,7 +224,7 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
             : _ItemDetailLoadState.ready;
       });
     } catch (_) {
-      if (!mounted) return;
+      if (!_isCurrentLoad(generation, itemId)) return;
       setState(() {
         _item = null;
         _loadState = _ItemDetailLoadState.failed;
@@ -220,20 +232,33 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
     }
   }
 
+  bool _isCurrentLoad(int generation, String itemId) {
+    return mounted && generation == _loadGeneration && widget.itemId == itemId;
+  }
+
   Future<void> _delete() async {
+    final item = _item;
+    final itemId = widget.itemId;
+    final generation = _loadGeneration;
+    if (_loadState != _ItemDetailLoadState.ready || item?.id != itemId) return;
     final repository = widget.itemRepository ?? context.read<AppState>().items;
     final action = await ConfirmDeleteDialog.show(
       context,
       title: '删除事项',
       message: '移入已删除可保留记录；彻底删除不可恢复。相册原图不会被删除。',
     );
-    if (!mounted || action == null) return;
-    if (action == 'hard') {
-      await repository.hardDelete(widget.itemId);
-    } else {
-      await repository.softDelete(widget.itemId);
+    if (action == null ||
+        !_isCurrentLoad(generation, itemId) ||
+        _loadState != _ItemDetailLoadState.ready ||
+        _item?.id != itemId) {
+      return;
     }
-    if (!mounted) return;
+    if (action == 'hard') {
+      await repository.hardDelete(itemId);
+    } else {
+      await repository.softDelete(itemId);
+    }
+    if (!mounted || !_isCurrentLoad(generation, itemId)) return;
     context.pop();
   }
 
