@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import '../models/models.dart';
 import '../repositories/item_repository.dart';
 import '../repositories/other_repositories.dart';
@@ -5,12 +7,13 @@ import '../utils/lunar_date_helper.dart';
 import 'notification_service.dart';
 import 'notification_permission_coordinator.dart';
 
-typedef ReminderScheduleAction = Future<void> Function({
-  required int id,
-  required String title,
-  required String body,
-  required DateTime when,
-});
+typedef ReminderScheduleAction =
+    Future<void> Function({
+      required int id,
+      required String title,
+      required String body,
+      required DateTime when,
+    });
 
 /// 启动时重排所有本地提醒（会议、悬停关注、生日）
 class ReminderSyncService {
@@ -24,7 +27,8 @@ class ReminderSyncService {
            scheduleItemReminder ??
            NotificationService.instance.scheduleItemReminder,
        _scheduleWeakReminder =
-           scheduleWeakReminder ?? NotificationService.instance.scheduleWeakReminder;
+           scheduleWeakReminder ??
+           NotificationService.instance.scheduleWeakReminder;
 
   ReminderSyncService._() : this();
   static final ReminderSyncService instance = ReminderSyncService._();
@@ -33,9 +37,22 @@ class ReminderSyncService {
   final ReminderScheduleAction _scheduleItemReminder;
   final ReminderScheduleAction _scheduleWeakReminder;
 
-  static int pendingId(String itemId) => itemId.hashCode ^ 0x100000;
-  static int birthdayAdvanceId(String id) => id.hashCode ^ 0x200000;
-  static int birthdayDayId(String id) => id.hashCode ^ 0x300000;
+  static const int notificationIdVersion = 1;
+  static const int _payloadMask = 0x07ffffff;
+
+  static int itemId(String id) => _notificationId(id, 0);
+  static int pendingId(String id) => _notificationId(id, 1);
+  static int birthdayAdvanceId(String id) => _notificationId(id, 2);
+  static int birthdayDayId(String id) => _notificationId(id, 3);
+
+  static int _notificationId(String sourceId, int type) {
+    var hash = 0x811c9dc5;
+    for (final byte in utf8.encode(sourceId)) {
+      hash ^= byte;
+      hash = (hash * 0x01000193) & 0xffffffff;
+    }
+    return (notificationIdVersion << 29) | (type << 27) | (hash & _payloadMask);
+  }
 
   Future<void> syncAll({
     required ItemRepository items,
@@ -53,15 +70,17 @@ class ReminderSyncService {
   }
 
   Future<void> syncItem(ItemModel item) async {
-    await _cancelNotification(item.id.hashCode);
+    await _cancelNotification(itemId(item.id));
     await _cancelNotification(pendingId(item.id));
 
     if (!itemHasActiveReminder(item)) return;
 
     if (item.startAt != null) {
-      final when = item.startAt!.subtract(Duration(minutes: item.reminderMinutes));
+      final when = item.startAt!.subtract(
+        Duration(minutes: item.reminderMinutes),
+      );
       await _scheduleItemReminder(
-        id: item.id.hashCode,
+        id: itemId(item.id),
         title: item.title,
         body: item.location ?? '日程提醒',
         when: when,

@@ -200,7 +200,7 @@ class ItemRepository {
       where: 'id = ?',
       whereArgs: [id],
     );
-    await _cancelBestEffort(id.hashCode);
+    await _cancelBestEffort(ReminderSyncService.itemId(id));
     await _cancelBestEffort(ReminderSyncService.pendingId(id));
   }
 
@@ -210,7 +210,7 @@ class ItemRepository {
       await txn.delete('attachments', where: 'item_id = ?', whereArgs: [id]);
       await txn.delete('items', where: 'id = ?', whereArgs: [id]);
     });
-    await _cancelBestEffort(id.hashCode);
+    await _cancelBestEffort(ReminderSyncService.itemId(id));
     await _cancelBestEffort(ReminderSyncService.pendingId(id));
   }
 

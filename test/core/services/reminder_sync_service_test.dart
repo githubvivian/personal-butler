@@ -20,6 +20,42 @@ void main() {
     messenger.setMockMethodCallHandler(_timezoneChannel, null);
   });
 
+  group('notification IDs', () {
+    test('matches the v1 ASCII known vectors', () {
+      const sourceId = 'pending-reminder';
+
+      expect(ReminderSyncService.itemId(sourceId), 546808337);
+      expect(ReminderSyncService.pendingId(sourceId), 681026065);
+      expect(ReminderSyncService.birthdayAdvanceId(sourceId), 815243793);
+      expect(ReminderSyncService.birthdayDayId(sourceId), 949461521);
+    });
+
+    test('matches the v1 UTF-8 known vectors for a non-ASCII ID', () {
+      const sourceId = '生日-张三';
+
+      expect(ReminderSyncService.itemId(sourceId), 571105456);
+      expect(ReminderSyncService.pendingId(sourceId), 705323184);
+      expect(ReminderSyncService.birthdayAdvanceId(sourceId), 839540912);
+      expect(ReminderSyncService.birthdayDayId(sourceId), 973758640);
+    });
+
+    test('keeps all four type namespaces isolated and Android-safe', () {
+      for (final sourceId in ['', 'a', 'item-123', '生日-张三']) {
+        final ids = [
+          ReminderSyncService.itemId(sourceId),
+          ReminderSyncService.pendingId(sourceId),
+          ReminderSyncService.birthdayAdvanceId(sourceId),
+          ReminderSyncService.birthdayDayId(sourceId),
+        ];
+
+        expect(ids.toSet(), hasLength(4));
+        for (final id in ids) {
+          expect(id, inInclusiveRange(0, 0x7fffffff));
+        }
+      }
+    });
+  });
+
   test('done item cancels both notification ids without scheduling', () async {
     final cancelled = <int>[];
     var itemSchedules = 0;
@@ -55,7 +91,7 @@ void main() {
     await service.syncItem(item);
 
     expect(cancelled, [
-      item.id.hashCode,
+      ReminderSyncService.itemId(item.id),
       ReminderSyncService.pendingId(item.id),
     ]);
     expect(itemSchedules, 0);
@@ -93,9 +129,9 @@ void main() {
     await service.syncItem(item);
 
     expect(events, [
-      'cancel:${item.id.hashCode}',
+      'cancel:${ReminderSyncService.itemId(item.id)}',
       'cancel:${ReminderSyncService.pendingId(item.id)}',
-      'item:${item.id.hashCode}',
+      'item:${ReminderSyncService.itemId(item.id)}',
     ]);
   });
 

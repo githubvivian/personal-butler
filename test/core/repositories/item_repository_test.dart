@@ -245,7 +245,7 @@ void main() {
         );
         expect(rows.single['is_deleted'], 1);
         expect(cancelledIds, [
-          itemId.hashCode,
+          ReminderSyncService.itemId(itemId),
           ReminderSyncService.pendingId(itemId),
         ]);
       },
@@ -316,7 +316,7 @@ void main() {
         expect(await database.query('items'), isEmpty);
         expect(await database.query('attachments'), isEmpty);
         expect(cancelledIds, [
-          itemId.hashCode,
+          ReminderSyncService.itemId(itemId),
           ReminderSyncService.pendingId(itemId),
         ]);
       },
