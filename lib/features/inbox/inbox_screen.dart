@@ -39,8 +39,9 @@ class _InboxScreenState extends State<InboxScreen> {
 
   Future<void> _pickAndOcr() async {
     final perm = await _photoPermissionHelper.requestImagePermission();
+    if (!mounted) return;
     if (!_photoPermissionHelper.hasImageAccess(perm)) {
-      if (mounted) snack(context, '需要相册权限以选择截图');
+      await _showPhotoPermissionDialog();
       return;
     }
     final assetId = await Navigator.push<String>(
@@ -72,6 +73,34 @@ class _InboxScreenState extends State<InboxScreen> {
     if (!mounted) return;
     context.push('/ocr-confirm/${draft.id}');
     _load();
+  }
+
+  Future<void> _showPhotoPermissionDialog() async {
+    final shouldOpenSettings = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('需要相册权限'),
+        content: const Text('选择截图需要访问相册中的图片。您可以前往系统设置开启权限。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('去设置'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || shouldOpenSettings != true) return;
+
+    try {
+      await _photoPermissionHelper.openSettings();
+    } catch (_) {
+      if (!mounted) return;
+      snack(context, '无法打开系统设置，请手动前往应用设置');
+    }
   }
 
   @override

@@ -16,5 +16,7 @@ class PhotoPermissionHelper {
     );
   }
 
+  Future<void> openSettings() => PhotoManager.openSetting();
+
   bool hasImageAccess(PermissionState state) => state.hasAccess;
 }

@@ -130,6 +130,94 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('denied photo access can be cancelled without opening settings', (
+    tester,
+  ) async {
+    final photoManagerPlugin = _InboxPhotoManagerPlugin(PermissionState.denied);
+    PhotoManager.withPlugin(photoManagerPlugin);
+    final appState = _TrackingAppState(
+      initializeNotifications: () async {},
+      readInitialized: () async => true,
+      validateSession: () async => true,
+      syncReminders: () async {},
+    );
+
+    await tester.pumpWidget(PersonalButlerApp(appState: appState));
+    await _pumpFrames(tester);
+    await tester.tap(find.text('截图导入'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AlertDialog), findsOneWidget);
+    expect(find.textContaining('需要相册权限'), findsOneWidget);
+    expect(find.text('取消'), findsOneWidget);
+    expect(find.text('去设置'), findsOneWidget);
+    expect(find.byType(GalleryPickerScreen), findsNothing);
+
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+
+    expect(photoManagerPlugin.openSettingCalls, 0);
+    expect(find.byType(GalleryPickerScreen), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('denied photo access opens settings only after confirmation', (
+    tester,
+  ) async {
+    final photoManagerPlugin = _InboxPhotoManagerPlugin(PermissionState.denied);
+    PhotoManager.withPlugin(photoManagerPlugin);
+    final appState = _TrackingAppState(
+      initializeNotifications: () async {},
+      readInitialized: () async => true,
+      validateSession: () async => true,
+      syncReminders: () async {},
+    );
+
+    await tester.pumpWidget(PersonalButlerApp(appState: appState));
+    await _pumpFrames(tester);
+    await tester.tap(find.text('截图导入'));
+    await tester.pumpAndSettle();
+
+    expect(photoManagerPlugin.openSettingCalls, 0);
+    await tester.tap(find.text('去设置'));
+    await tester.pumpAndSettle();
+
+    expect(photoManagerPlugin.openSettingCalls, 1);
+    expect(find.byType(InboxScreen), findsOneWidget);
+    expect(find.byType(GalleryPickerScreen), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('settings failure stays in inbox and shows a safe message', (
+    tester,
+  ) async {
+    final photoManagerPlugin = _InboxPhotoManagerPlugin(
+      PermissionState.denied,
+      openSettingError: StateError('private path token'),
+    );
+    PhotoManager.withPlugin(photoManagerPlugin);
+    final appState = _TrackingAppState(
+      initializeNotifications: () async {},
+      readInitialized: () async => true,
+      validateSession: () async => true,
+      syncReminders: () async {},
+    );
+
+    await tester.pumpWidget(PersonalButlerApp(appState: appState));
+    await _pumpFrames(tester);
+    await tester.tap(find.text('截图导入'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('去设置'));
+    await _pumpFrames(tester);
+
+    expect(photoManagerPlugin.openSettingCalls, 1);
+    expect(find.text('无法打开系统设置，请手动前往应用设置'), findsOneWidget);
+    expect(find.textContaining('private path token'), findsNothing);
+    expect(find.byType(InboxScreen), findsOneWidget);
+    expect(find.byType(GalleryPickerScreen), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('bootstrap failure shows a safe retry page and stays locked', (
     tester,
   ) async {
@@ -257,10 +345,12 @@ class _EmptyItemRepository extends ItemRepository {
 }
 
 class _InboxPhotoManagerPlugin extends PhotoManagerPlugin {
-  _InboxPhotoManagerPlugin(this.permissionState);
+  _InboxPhotoManagerPlugin(this.permissionState, {this.openSettingError});
 
   final PermissionState permissionState;
+  final Object? openSettingError;
   PermissionRequestOption? requestOption;
+  int openSettingCalls = 0;
 
   @override
   Future<PermissionState> requestPermissionExtend(
@@ -268,6 +358,13 @@ class _InboxPhotoManagerPlugin extends PhotoManagerPlugin {
   ) async {
     this.requestOption = requestOption;
     return permissionState;
+  }
+
+  @override
+  Future<void> openSetting() async {
+    openSettingCalls++;
+    final error = openSettingError;
+    if (error != null) throw error;
   }
 
   @override

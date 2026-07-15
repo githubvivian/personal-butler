@@ -30,6 +30,15 @@ void main() {
     );
   });
 
+  test('openSettings delegates to PhotoManager.openSetting', () async {
+    final plugin = _CapturingPhotoManagerPlugin();
+    PhotoManager.withPlugin(plugin);
+
+    await helper.openSettings();
+
+    expect(plugin.openSettingCalls, 1);
+  });
+
   test('authorized and limited states have image access', () {
     expect(helper.hasImageAccess(PermissionState.authorized), isTrue);
     expect(helper.hasImageAccess(PermissionState.limited), isTrue);
@@ -44,6 +53,7 @@ void main() {
 
 class _CapturingPhotoManagerPlugin extends PhotoManagerPlugin {
   PermissionRequestOption? requestOption;
+  int openSettingCalls = 0;
 
   @override
   Future<PermissionState> requestPermissionExtend(
@@ -51,5 +61,10 @@ class _CapturingPhotoManagerPlugin extends PhotoManagerPlugin {
   ) async {
     this.requestOption = requestOption;
     return PermissionState.authorized;
+  }
+
+  @override
+  Future<void> openSetting() async {
+    openSettingCalls++;
   }
 }
