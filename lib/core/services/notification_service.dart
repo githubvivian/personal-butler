@@ -129,5 +129,20 @@ class NotificationService {
     );
   }
 
+  Future<Set<int>> pendingNotificationIds() async {
+    if (!_ready) await init();
+    final requests = await _plugin.pendingNotificationRequests();
+    return requests.map((request) => request.id).toSet();
+  }
+
+  Future<Set<int>> activeNotificationIds() async {
+    if (!_ready) await init();
+    final notifications = await _plugin.getActiveNotifications();
+    return {
+      for (final notification in notifications)
+        if (notification.id != null) notification.id!,
+    };
+  }
+
   Future<void> cancel(int id) => _plugin.cancel(id);
 }

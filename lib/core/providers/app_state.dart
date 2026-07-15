@@ -109,7 +109,7 @@ class AppState extends ChangeNotifier {
   Future<void> _syncReminders() {
     final callback = _syncRemindersCallback;
     if (callback != null) return callback();
-    return ReminderSyncService.instance.syncAll(
+    return ReminderSyncService.instance.reconcileAll(
       items: items,
       birthdays: birthdays,
     );

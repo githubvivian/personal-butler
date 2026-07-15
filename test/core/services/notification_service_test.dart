@@ -3,7 +3,22 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:personal_butler/core/services/notification_service.dart';
 
+const _notificationChannel = MethodChannel(
+  'dexterous.com/flutter/local_notifications',
+);
+const _timezoneChannel = MethodChannel('flutter_timezone');
+
 void main() {
+  AndroidFlutterLocalNotificationsPlugin.registerWith();
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  tearDown(() {
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(_notificationChannel, null);
+    messenger.setMockMethodCallHandler(_timezoneChannel, null);
+  });
+
   group('scheduleExactAlarmWithPermissionFallback', () {
     test('uses exact scheduling once when it succeeds', () async {
       final modes = <AndroidScheduleMode>[];
@@ -82,4 +97,59 @@ void main() {
       ]);
     });
   });
+
+  test(
+    'pendingNotificationIds initializes and maps pending requests',
+    () async {
+      final methods = <String>[];
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(_timezoneChannel, (_) async {
+        return 'Asia/Shanghai';
+      });
+      messenger.setMockMethodCallHandler(_notificationChannel, (call) async {
+        methods.add(call.method);
+        if (call.method == 'initialize') return true;
+        if (call.method == 'pendingNotificationRequests') {
+          return <Map<String, Object?>>[
+            {'id': 7, 'title': 'first'},
+            {'id': 11, 'title': 'second'},
+          ];
+        }
+        return null;
+      });
+
+      final ids = await NotificationService.instance.pendingNotificationIds();
+
+      expect(ids, {7, 11});
+      expect(methods, contains('initialize'));
+      expect(methods, contains('pendingNotificationRequests'));
+      expect(methods, isNot(contains('requestNotificationsPermission')));
+    },
+  );
+
+  test(
+    'activeNotificationIds ignores active notifications without ids',
+    () async {
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(_timezoneChannel, (_) async {
+        return 'Asia/Shanghai';
+      });
+      messenger.setMockMethodCallHandler(_notificationChannel, (call) async {
+        if (call.method == 'initialize') return true;
+        if (call.method == 'getActiveNotifications') {
+          return <Map<String, Object?>>[
+            {'id': 13, 'title': 'with id'},
+            {'id': null, 'title': 'without id'},
+          ];
+        }
+        return null;
+      });
+
+      final ids = await NotificationService.instance.activeNotificationIds();
+
+      expect(ids, {13});
+    },
+  );
 }

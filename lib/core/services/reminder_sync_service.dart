@@ -15,14 +15,24 @@ typedef ReminderScheduleAction =
       required DateTime when,
     });
 
+typedef NotificationIdQuery = Future<Set<int>> Function();
+
 /// 启动时重排所有本地提醒（会议、悬停关注、生日）
 class ReminderSyncService {
   ReminderSyncService({
     Future<void> Function(int)? cancelNotification,
+    NotificationIdQuery? pendingNotificationIds,
+    NotificationIdQuery? activeNotificationIds,
     ReminderScheduleAction? scheduleItemReminder,
     ReminderScheduleAction? scheduleWeakReminder,
   }) : _cancelNotification =
            cancelNotification ?? NotificationService.instance.cancel,
+       _pendingNotificationIds =
+           pendingNotificationIds ??
+           NotificationService.instance.pendingNotificationIds,
+       _activeNotificationIds =
+           activeNotificationIds ??
+           NotificationService.instance.activeNotificationIds,
        _scheduleItemReminder =
            scheduleItemReminder ??
            NotificationService.instance.scheduleItemReminder,
@@ -34,6 +44,8 @@ class ReminderSyncService {
   static final ReminderSyncService instance = ReminderSyncService._();
 
   final Future<void> Function(int) _cancelNotification;
+  final NotificationIdQuery _pendingNotificationIds;
+  final NotificationIdQuery _activeNotificationIds;
   final ReminderScheduleAction _scheduleItemReminder;
   final ReminderScheduleAction _scheduleWeakReminder;
 
@@ -66,6 +78,134 @@ class ReminderSyncService {
     final allBirthdays = await birthdays.getAll();
     for (final b in allBirthdays) {
       await syncBirthday(b);
+    }
+  }
+
+  Future<void> reconcileAll({
+    required ItemRepository items,
+    required BirthdayRepository birthdays,
+  }) async {
+    final plans = <_ReminderPlan>[];
+    final allItems = await items.getAllActiveConfirmed();
+    final allBirthdays = await birthdays.getAll();
+    final now = DateTime.now();
+
+    for (final item in allItems) {
+      if (!itemHasActiveReminder(item)) continue;
+      if (item.startAt != null) {
+        final when = item.startAt!.subtract(
+          Duration(minutes: item.reminderMinutes),
+        );
+        if (when.isAfter(now)) {
+          plans.add(
+            _ReminderPlan(
+              id: itemId(item.id),
+              title: item.title,
+              body: item.location ?? '日程提醒',
+              when: when,
+              schedule: _scheduleItemReminder,
+            ),
+          );
+        }
+      }
+      if (item.isPendingType &&
+          item.status != 'done' &&
+          item.nextFollowUpAt != null &&
+          item.nextFollowUpAt!.isAfter(now)) {
+        plans.add(
+          _ReminderPlan(
+            id: pendingId(item.id),
+            title: '关注：${item.title}',
+            body: '悬而未决事项到了关注时间，点击查看进展',
+            when: item.nextFollowUpAt!,
+            schedule: _scheduleWeakReminder,
+          ),
+        );
+      }
+    }
+
+    for (final birthday in allBirthdays) {
+      if (birthday.isDeleted) continue;
+      final next = LunarDateHelper.nextSolarOccurrence(
+        isLunar: birthday.isLunar,
+        month: birthday.month,
+        day: birthday.day,
+        isLeapMonth: birthday.isLeapMonth,
+      );
+      if (next == null) continue;
+      final remindAt = DateTime(next.year, next.month, next.day, 9);
+      final advance = remindAt.subtract(
+        Duration(days: birthday.remindDaysBefore),
+      );
+      if (advance.isAfter(now)) {
+        plans.add(
+          _ReminderPlan(
+            id: birthdayAdvanceId(birthday.id),
+            title: '生日临近',
+            body: '${birthday.name} 的生日还有 ${birthday.remindDaysBefore} 天',
+            when: advance,
+            schedule: _scheduleWeakReminder,
+          ),
+        );
+      }
+      if (remindAt.isAfter(now)) {
+        plans.add(
+          _ReminderPlan(
+            id: birthdayDayId(birthday.id),
+            title: '生日快乐',
+            body: '今天是 ${birthday.name} 的生日',
+            when: remindAt,
+            schedule: _scheduleItemReminder,
+          ),
+        );
+      }
+    }
+
+    final desiredIds = plans.map((plan) => plan.id).toSet();
+    Object? firstError;
+    StackTrace? firstStackTrace;
+    void rememberError(Object error, StackTrace stackTrace) {
+      firstError ??= error;
+      firstStackTrace ??= stackTrace;
+    }
+
+    Set<int>? pendingIds;
+    Set<int>? activeIds;
+    try {
+      pendingIds = await _pendingNotificationIds();
+    } catch (error, stackTrace) {
+      rememberError(error, stackTrace);
+    }
+    try {
+      activeIds = await _activeNotificationIds();
+    } catch (error, stackTrace) {
+      rememberError(error, stackTrace);
+    }
+    if (pendingIds != null && activeIds != null) {
+      for (final id
+          in pendingIds.difference(desiredIds).difference(activeIds)) {
+        try {
+          await _cancelNotification(id);
+        } catch (error, stackTrace) {
+          rememberError(error, stackTrace);
+        }
+      }
+    }
+    for (final plan in plans) {
+      try {
+        await plan.schedule(
+          id: plan.id,
+          title: plan.title,
+          body: plan.body,
+          when: plan.when,
+        );
+      } catch (error, stackTrace) {
+        rememberError(error, stackTrace);
+      }
+    }
+    final error = firstError;
+    if (error != null) {
+      Error.throwWithStackTrace(error, firstStackTrace!);
     }
   }
 
@@ -132,4 +272,20 @@ class ReminderSyncService {
       );
     }
   }
+}
+
+class _ReminderPlan {
+  const _ReminderPlan({
+    required this.id,
+    required this.title,
+    required this.body,
+    required this.when,
+    required this.schedule,
+  });
+
+  final int id;
+  final String title;
+  final String body;
+  final DateTime when;
+  final ReminderScheduleAction schedule;
 }
