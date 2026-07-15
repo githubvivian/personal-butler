@@ -3,10 +3,13 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/providers/app_state.dart';
+import '../../core/services/system_settings_service.dart';
 import '../widgets/common_widgets.dart';
 
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
+  const SettingsScreen({super.key, this.notificationSettingsOpener});
+
+  final NotificationSettingsOpener? notificationSettingsOpener;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -129,7 +132,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _menuTile(
               Icons.notifications_outlined,
               '通知设置',
-              () => snack(context, '使用系统通知渠道，可在系统设置中管理'),
+              _openNotificationSettings,
             ),
             _menuTile(Icons.security, '隐私与安全', () => _showPrivacy()),
             const SizedBox(height: 12),
@@ -144,6 +147,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _openNotificationSettings() async {
+    var result = SystemSettingsLaunchResult.unavailable;
+    try {
+      result =
+          await (widget.notificationSettingsOpener ??
+              const SystemSettingsService().openAppNotificationSettings)();
+    } catch (_) {}
+
+    if (!mounted) return;
+    if (result == SystemSettingsLaunchResult.unavailable) {
+      snack(context, '无法打开系统通知设置，请手动前往应用设置');
+    }
   }
 
   Widget _miniStat(String label, String value) {
