@@ -101,6 +101,45 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('notification init failure still routes to the inbox', (
+    tester,
+  ) async {
+    var readInitializedAttempts = 0;
+    var validateSessionAttempts = 0;
+    var syncRemindersAttempts = 0;
+    final appState = _TrackingAppState(
+      initializeNotifications: () async {
+        throw StateError('notification init failed');
+      },
+      readInitialized: () async {
+        readInitializedAttempts++;
+        return true;
+      },
+      validateSession: () async {
+        validateSessionAttempts++;
+        return true;
+      },
+      syncReminders: () async {
+        syncRemindersAttempts++;
+      },
+    );
+
+    await tester.pumpWidget(PersonalButlerApp(appState: appState));
+    await _pumpFrames(tester);
+
+    expect(find.byType(MainShell), findsOneWidget);
+    expect(find.byType(InboxScreen), findsOneWidget);
+    expect(find.byKey(const Key('startup-error-screen')), findsNothing);
+    expect(find.byType(LockScreen), findsNothing);
+    expect(readInitializedAttempts, 1);
+    expect(validateSessionAttempts, 1);
+    expect(syncRemindersAttempts, 1);
+    expect(appState.loading, isFalse);
+    expect(appState.unlocked, isTrue);
+    expect(appState.bootstrapError, isNull);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('limited photo access opens the image gallery', (tester) async {
     final photoManagerPlugin = _InboxPhotoManagerPlugin(
       PermissionState.limited,
@@ -218,36 +257,37 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('bootstrap failure shows a safe retry page and stays locked', (
-    tester,
-  ) async {
-    final appState = _TrackingAppState(
-      initializeNotifications: () async {
-        throw StateError('敏感启动细节');
-      },
-      readInitialized: () async => true,
-      validateSession: () async => true,
-      syncReminders: () async {},
-    );
+  testWidgets(
+    'secure bootstrap failure shows a safe retry page and stays locked',
+    (tester) async {
+      final appState = _TrackingAppState(
+        initializeNotifications: () async {},
+        readInitialized: () async {
+          throw StateError('敏感启动细节');
+        },
+        validateSession: () async => true,
+        syncReminders: () async {},
+      );
 
-    await tester.pumpWidget(PersonalButlerApp(appState: appState));
-    await _pumpFrames(tester);
+      await tester.pumpWidget(PersonalButlerApp(appState: appState));
+      await _pumpFrames(tester);
 
-    expect(find.byKey(const Key('startup-error-screen')), findsOneWidget);
-    expect(find.text('安全启动失败'), findsOneWidget);
-    expect(find.text('无法安全验证应用状态，请重试。'), findsOneWidget);
-    expect(find.text('重试'), findsOneWidget);
-    expect(find.textContaining('敏感启动细节'), findsNothing);
-    expect(find.byType(InboxScreen), findsNothing);
-    expect(find.byType(MainShell), findsNothing);
-    expect(find.byType(LockScreen), findsNothing);
-    expect(appState.loading, isFalse);
-    expect(appState.unlocked, isFalse);
-    expect(appState.bootstrapError, isNotNull);
-    expect(appState.setupFirstRunAttempts, 0);
-    expect(appState.unlockAttempts, 0);
-    expect(tester.takeException(), isNull);
-  });
+      expect(find.byKey(const Key('startup-error-screen')), findsOneWidget);
+      expect(find.text('安全启动失败'), findsOneWidget);
+      expect(find.text('无法安全验证应用状态，请重试。'), findsOneWidget);
+      expect(find.text('重试'), findsOneWidget);
+      expect(find.textContaining('敏感启动细节'), findsNothing);
+      expect(find.byType(InboxScreen), findsNothing);
+      expect(find.byType(MainShell), findsNothing);
+      expect(find.byType(LockScreen), findsNothing);
+      expect(appState.loading, isFalse);
+      expect(appState.unlocked, isFalse);
+      expect(appState.bootstrapError, isNotNull);
+      expect(appState.setupFirstRunAttempts, 0);
+      expect(appState.unlockAttempts, 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'retry clears the old error and can complete to the lock screen',
@@ -255,14 +295,15 @@ void main() {
       var attempts = 0;
       final retryGate = Completer<void>();
       final appState = _TrackingAppState(
-        initializeNotifications: () async {
+        initializeNotifications: () async {},
+        readInitialized: () async {
           attempts++;
           if (attempts == 1) {
             throw StateError('first failure');
           }
           await retryGate.future;
+          return true;
         },
-        readInitialized: () async => true,
         validateSession: () async => false,
         syncReminders: () async {},
       );

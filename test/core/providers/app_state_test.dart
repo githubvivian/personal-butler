@@ -1,9 +1,20 @@
 import 'dart:async';
 
+import 'package:flutter/services.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:personal_butler/core/providers/app_state.dart';
 
+const _localAuthChannel = MethodChannel('plugins.flutter.io/local_auth');
+
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  tearDown(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_localAuthChannel, null);
+  });
+
   group('AppState.bootstrap', () {
     test('runs the secure bootstrap steps in order', () async {
       final events = <String>[];
@@ -196,22 +207,56 @@ void main() {
       await expectLater(state.bootstrap(), completes);
 
       expect(state.loading, isFalse);
+      expect(state.initialized, isFalse);
       expect(state.unlocked, isFalse);
       expect(state.bootstrapError, same(failure));
     });
 
+    test(
+      'notification init failure still runs secure checks and unlocks',
+      () async {
+        final events = <String>[];
+        final state = AppState(
+          initializeNotifications: () async {
+            events.add('notifications');
+            throw StateError('notification init failed');
+          },
+          readInitialized: () async {
+            events.add('initialized');
+            return true;
+          },
+          validateSession: () async {
+            events.add('session');
+            return true;
+          },
+          syncReminders: () async {
+            events.add('sync');
+          },
+        );
+
+        await expectLater(state.bootstrap(), completes);
+
+        expect(events, ['notifications', 'initialized', 'session', 'sync']);
+        expect(state.loading, isFalse);
+        expect(state.initialized, isTrue);
+        expect(state.unlocked, isTrue);
+        expect(state.bootstrapError, isNull);
+      },
+    );
+
     test('retry clears the old error while loading and can succeed', () async {
-      var notificationAttempts = 0;
+      var initializedReads = 0;
       final retryGate = Completer<void>();
       final state = AppState(
-        initializeNotifications: () async {
-          notificationAttempts++;
-          if (notificationAttempts == 1) {
+        initializeNotifications: () async {},
+        readInitialized: () async {
+          initializedReads++;
+          if (initializedReads == 1) {
             throw StateError('first failure');
           }
           await retryGate.future;
+          return true;
         },
-        readInitialized: () async => true,
         validateSession: () async => true,
         syncReminders: () async {},
       );
@@ -233,9 +278,8 @@ void main() {
       expect(state.unlocked, isTrue);
     });
 
-    test('reminder sync exception also fails closed', () async {
+    test('reminder sync exception does not relock a valid session', () async {
       final events = <String>[];
-      final failure = StateError('sync failed');
       final state = AppState(
         initializeNotifications: () async {
           events.add('notifications');
@@ -250,7 +294,7 @@ void main() {
         },
         syncReminders: () async {
           events.add('sync');
-          throw failure;
+          throw StateError('sync failed');
         },
       );
 
@@ -258,8 +302,66 @@ void main() {
 
       expect(events, ['notifications', 'initialized', 'session', 'sync']);
       expect(state.loading, isFalse);
-      expect(state.unlocked, isFalse);
-      expect(state.bootstrapError, same(failure));
+      expect(state.initialized, isTrue);
+      expect(state.unlocked, isTrue);
+      expect(state.bootstrapError, isNull);
     });
   });
+
+  group('AppState.unlock', () {
+    test(
+      'successful authentication unlocks and notifies when sync throws',
+      () async {
+        _setAuthenticationResult(true);
+        var syncAttempts = 0;
+        var notifications = 0;
+        final state =
+            AppState(
+              syncReminders: () async {
+                syncAttempts++;
+                throw StateError('sync failed');
+              },
+            )..addListener(() {
+              notifications++;
+            });
+
+        final result = await state.unlock();
+
+        expect(result, isTrue);
+        expect(state.unlocked, isTrue);
+        expect(syncAttempts, 1);
+        expect(notifications, 1);
+      },
+    );
+
+    test('failed authentication does not sync reminders', () async {
+      _setAuthenticationResult(false);
+      var syncAttempts = 0;
+      var notifications = 0;
+      final state =
+          AppState(
+            syncReminders: () async {
+              syncAttempts++;
+            },
+          )..addListener(() {
+            notifications++;
+          });
+
+      final result = await state.unlock();
+
+      expect(result, isFalse);
+      expect(state.unlocked, isFalse);
+      expect(syncAttempts, 0);
+      expect(notifications, 1);
+    });
+  });
+}
+
+void _setAuthenticationResult(bool result) {
+  FlutterSecureStorage.setMockInitialValues({});
+  TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+      .setMockMethodCallHandler(_localAuthChannel, (call) async {
+        if (call.method == 'authenticate') return result;
+        return null;
+      });
 }

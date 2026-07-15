@@ -81,12 +81,17 @@ class AppState extends ChangeNotifier {
 
     try {
       await _initializeNotifications();
+    } catch (_) {}
+
+    try {
       final initialized = await _readInitialized();
       var unlocked = false;
       if (initialized) {
         unlocked = await _validateSession();
         if (unlocked) {
-          await _syncReminders();
+          try {
+            await _syncReminders();
+          } catch (_) {}
         }
       }
 
@@ -123,10 +128,9 @@ class AppState extends ChangeNotifier {
   Future<bool> unlock() async {
     final ok = await session.authenticate();
     if (ok) {
-      await ReminderSyncService.instance.syncAll(
-        items: items,
-        birthdays: birthdays,
-      );
+      try {
+        await _syncReminders();
+      } catch (_) {}
     }
     _unlocked = ok;
     notifyListeners();
