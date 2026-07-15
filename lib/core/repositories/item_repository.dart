@@ -6,11 +6,20 @@ import '../services/notification_service.dart';
 import '../services/reminder_sync_service.dart';
 
 class ItemRepository {
-  ItemRepository({Future<Database> Function()? databaseProvider})
-    : _databaseProvider = databaseProvider ?? _defaultDatabaseProvider;
+  ItemRepository({
+    Future<Database> Function()? databaseProvider,
+    Future<void> Function(ItemModel)? syncItemReminder,
+    Future<void> Function(int)? cancelNotification,
+  }) : _databaseProvider = databaseProvider ?? _defaultDatabaseProvider,
+       _syncItemReminder =
+           syncItemReminder ?? ReminderSyncService.instance.syncItem,
+       _cancelNotification =
+           cancelNotification ?? NotificationService.instance.cancel;
 
   final _uuid = const Uuid();
   final Future<Database> Function() _databaseProvider;
+  final Future<void> Function(ItemModel) _syncItemReminder;
+  final Future<void> Function(int) _cancelNotification;
 
   static Future<Database> _defaultDatabaseProvider() {
     return DatabaseHelper.instance.database;
@@ -108,7 +117,9 @@ class ItemRepository {
       item.toMap(),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
-    await ReminderSyncService.instance.syncItem(item);
+    try {
+      await _syncItemReminder(item);
+    } catch (_) {}
   }
 
   Future<ItemModel> createDraft({
@@ -189,20 +200,22 @@ class ItemRepository {
       where: 'id = ?',
       whereArgs: [id],
     );
-    await NotificationService.instance.cancel(id.hashCode);
-    await NotificationService.instance.cancel(
-      ReminderSyncService.pendingId(id),
-    );
+    await _cancelBestEffort(id.hashCode);
+    await _cancelBestEffort(ReminderSyncService.pendingId(id));
   }
 
   Future<void> hardDelete(String id) async {
     final db = await _databaseProvider();
     await db.delete('attachments', where: 'item_id = ?', whereArgs: [id]);
     await db.delete('items', where: 'id = ?', whereArgs: [id]);
-    await NotificationService.instance.cancel(id.hashCode);
-    await NotificationService.instance.cancel(
-      ReminderSyncService.pendingId(id),
-    );
+    await _cancelBestEffort(id.hashCode);
+    await _cancelBestEffort(ReminderSyncService.pendingId(id));
+  }
+
+  Future<void> _cancelBestEffort(int notificationId) async {
+    try {
+      await _cancelNotification(notificationId);
+    } catch (_) {}
   }
 
   Future<List<AttachmentModel>> getAttachments(String itemId) async {

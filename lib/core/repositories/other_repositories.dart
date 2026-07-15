@@ -3,13 +3,31 @@ import 'package:uuid/uuid.dart';
 import '../database/database_helper.dart';
 import '../models/models.dart';
 import '../security/encryption_service.dart';
+import '../services/notification_service.dart';
 import '../services/reminder_sync_service.dart';
 
 class BirthdayRepository {
+  BirthdayRepository({
+    Future<Database> Function()? databaseProvider,
+    Future<void> Function(BirthdayModel)? syncBirthdayReminder,
+    Future<void> Function(int)? cancelNotification,
+  }) : _databaseProvider = databaseProvider ?? _defaultDatabaseProvider,
+       _syncBirthdayReminder =
+           syncBirthdayReminder ?? ReminderSyncService.instance.syncBirthday,
+       _cancelNotification =
+           cancelNotification ?? NotificationService.instance.cancel;
+
   final _uuid = const Uuid();
+  final Future<Database> Function() _databaseProvider;
+  final Future<void> Function(BirthdayModel) _syncBirthdayReminder;
+  final Future<void> Function(int) _cancelNotification;
+
+  static Future<Database> _defaultDatabaseProvider() {
+    return DatabaseHelper.instance.database;
+  }
 
   Future<List<BirthdayModel>> getAll() async {
-    final db = await DatabaseHelper.instance.database;
+    final db = await _databaseProvider();
     final rows = await db.query(
       'birthdays',
       where: 'is_deleted = 0',
@@ -19,13 +37,15 @@ class BirthdayRepository {
   }
 
   Future<void> save(BirthdayModel model) async {
-    final db = await DatabaseHelper.instance.database;
+    final db = await _databaseProvider();
     await db.insert(
       'birthdays',
       model.toMap(),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
-    await ReminderSyncService.instance.syncBirthday(model);
+    try {
+      await _syncBirthdayReminder(model);
+    } catch (_) {}
   }
 
   Future<BirthdayModel> create({
@@ -53,17 +73,21 @@ class BirthdayRepository {
   }
 
   Future<void> softDelete(String id) async {
-    final db = await DatabaseHelper.instance.database;
+    final db = await _databaseProvider();
     await db.update(
       'birthdays',
       {'is_deleted': 1},
       where: 'id = ?',
       whereArgs: [id],
     );
-    final rows = await db.query('birthdays', where: 'id = ?', whereArgs: [id]);
-    if (rows.isNotEmpty) {
-      await ReminderSyncService.instance.syncBirthday(BirthdayModel.fromMap(rows.first));
-    }
+    await _cancelBestEffort(ReminderSyncService.birthdayAdvanceId(id));
+    await _cancelBestEffort(ReminderSyncService.birthdayDayId(id));
+  }
+
+  Future<void> _cancelBestEffort(int notificationId) async {
+    try {
+      await _cancelNotification(notificationId);
+    } catch (_) {}
   }
 }
 
