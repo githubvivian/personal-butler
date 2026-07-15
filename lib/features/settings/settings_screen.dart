@@ -3,13 +3,31 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/providers/app_state.dart';
+import '../../core/repositories/item_repository.dart';
+import '../../core/repositories/other_repositories.dart';
+import '../../core/services/notification_service.dart';
+import '../../core/services/reminder_sync_service.dart';
 import '../../core/services/system_settings_service.dart';
 import '../widgets/common_widgets.dart';
 
+typedef ExactAlarmPermissionRequester = Future<bool?> Function();
+typedef ReminderReconciler =
+    Future<void> Function({
+      required ItemRepository items,
+      required BirthdayRepository birthdays,
+    });
+
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key, this.notificationSettingsOpener});
+  const SettingsScreen({
+    super.key,
+    this.notificationSettingsOpener,
+    this.exactAlarmPermissionRequester,
+    this.reminderReconciler,
+  });
 
   final NotificationSettingsOpener? notificationSettingsOpener;
+  final ExactAlarmPermissionRequester? exactAlarmPermissionRequester;
+  final ReminderReconciler? reminderReconciler;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -18,6 +36,7 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   Map<String, int> _stats = {};
   String _scheduleSummary = '';
+  Future<void>? _exactAlarmPermissionRequest;
 
   @override
   void initState() {
@@ -134,6 +153,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
               '通知设置',
               _openNotificationSettings,
             ),
+            _menuTile(
+              Icons.alarm_on_outlined,
+              '提高会议提醒准点性',
+              _requestExactAlarmPermission,
+              subtitle: '进入系统精确闹钟授权，帮助会议提醒更准时',
+            ),
             _menuTile(Icons.security, '隐私与安全', () => _showPrivacy()),
             const SizedBox(height: 12),
             OutlinedButton.icon(
@@ -161,6 +186,55 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (result == SystemSettingsLaunchResult.unavailable) {
       snack(context, '无法打开系统通知设置，请手动前往应用设置');
     }
+  }
+
+  Future<void> _requestExactAlarmPermission() {
+    final inFlight = _exactAlarmPermissionRequest;
+    if (inFlight != null) return inFlight;
+
+    late final Future<void> request;
+    request = _runExactAlarmPermissionRequest().whenComplete(() {
+      if (identical(_exactAlarmPermissionRequest, request)) {
+        _exactAlarmPermissionRequest = null;
+      }
+    });
+    _exactAlarmPermissionRequest = request;
+    return request;
+  }
+
+  Future<void> _runExactAlarmPermissionRequest() async {
+    final appState = context.read<AppState>();
+    final requester =
+        widget.exactAlarmPermissionRequester ??
+        NotificationService.instance.requestExactAlarmsPermission;
+    final reconciler =
+        widget.reminderReconciler ?? ReminderSyncService.instance.reconcileAll;
+
+    bool? granted;
+    try {
+      granted = await requester();
+    } catch (_) {
+      if (!mounted) return;
+      snack(context, '无法请求精确闹钟权限，请稍后重试');
+      return;
+    }
+
+    if (granted != true) {
+      if (!mounted) return;
+      snack(context, '未获得精确闹钟权限，会议提醒仍将使用普通模式');
+      return;
+    }
+
+    try {
+      await reconciler(items: appState.items, birthdays: appState.birthdays);
+    } catch (_) {
+      if (!mounted) return;
+      snack(context, '权限已开启，但会议提醒重新同步失败，请稍后重试');
+      return;
+    }
+
+    if (!mounted) return;
+    snack(context, '精确闹钟权限已开启，会议提醒已重新同步');
   }
 
   Widget _miniStat(String label, String value) {

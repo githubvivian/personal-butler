@@ -125,6 +125,7 @@ void main() {
       expect(methods, contains('initialize'));
       expect(methods, contains('pendingNotificationRequests'));
       expect(methods, isNot(contains('requestNotificationsPermission')));
+      expect(methods, isNot(contains('requestExactAlarmsPermission')));
     },
   );
 
@@ -150,6 +151,43 @@ void main() {
       final ids = await NotificationService.instance.activeNotificationIds();
 
       expect(ids, {13});
+    },
+  );
+
+  test(
+    'requestExactAlarmsPermission delegates only when explicitly called',
+    () async {
+      final methods = <String>[];
+      final exactAlarmResponses = <bool?>[true, false, null];
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(_timezoneChannel, (_) async {
+        return 'Asia/Shanghai';
+      });
+      messenger.setMockMethodCallHandler(_notificationChannel, (call) async {
+        methods.add(call.method);
+        if (call.method == 'initialize') return true;
+        if (call.method == 'requestExactAlarmsPermission') {
+          return exactAlarmResponses.removeAt(0);
+        }
+        return null;
+      });
+
+      await NotificationService.instance.init();
+
+      expect(methods, isNot(contains('requestExactAlarmsPermission')));
+
+      for (final expected in <bool?>[true, false, null]) {
+        final methodCountBeforeRequest = methods.length;
+
+        final result = await NotificationService.instance
+            .requestExactAlarmsPermission();
+
+        expect(result, expected);
+        expect(methods.sublist(methodCountBeforeRequest), [
+          'requestExactAlarmsPermission',
+        ]);
+      }
     },
   );
 }
