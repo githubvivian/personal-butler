@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:personal_butler/core/providers/app_state.dart';
+import 'package:personal_butler/core/security/session_service.dart';
 
 const _localAuthChannel = MethodChannel('plugins.flutter.io/local_auth');
 
@@ -353,6 +354,74 @@ void main() {
       expect(state.unlocked, isFalse);
       expect(syncAttempts, 0);
       expect(notifications, 1);
+    });
+  });
+
+  group('AppState.lock', () {
+    test(
+      'fails closed immediately and waits for persisted session deletion',
+      () async {
+        final deletionGate = Completer<void>();
+        final events = <String>[];
+        var callbackSawLockedState = false;
+        late final AppState state;
+        state = AppState(
+          initializeNotifications: () async {},
+          readInitialized: () async => true,
+          validateSession: () async => true,
+          syncReminders: () async {},
+          lockSession: () {
+            events.add('delete-start');
+            callbackSawLockedState =
+                !state.unlocked && !SessionService.instance.isVaultSessionValid;
+            return deletionGate.future;
+          },
+        );
+        await state.bootstrap();
+        SessionService.instance.unlockVault();
+        var notifications = 0;
+        state.addListener(() {
+          notifications++;
+          events.add('notify');
+        });
+
+        final lockFuture = state.lock();
+        var completed = false;
+        lockFuture.whenComplete(() {
+          completed = true;
+        });
+        await Future<void>.delayed(Duration.zero);
+
+        expect(state.unlocked, isFalse);
+        expect(SessionService.instance.isVaultSessionValid, isFalse);
+        expect(callbackSawLockedState, isTrue);
+        expect(notifications, 1);
+        expect(events, ['notify', 'delete-start']);
+        expect(completed, isFalse);
+
+        deletionGate.complete();
+        await lockFuture;
+
+        expect(completed, isTrue);
+      },
+    );
+
+    test('remains locked and reports persisted deletion failure', () async {
+      final failure = StateError('secure deletion failed');
+      final state = AppState(
+        initializeNotifications: () async {},
+        readInitialized: () async => true,
+        validateSession: () async => true,
+        syncReminders: () async {},
+        lockSession: () async => throw failure,
+      );
+      await state.bootstrap();
+      SessionService.instance.unlockVault();
+
+      await expectLater(state.lock(), throwsA(same(failure)));
+
+      expect(state.unlocked, isFalse);
+      expect(SessionService.instance.isVaultSessionValid, isFalse);
     });
   });
 }

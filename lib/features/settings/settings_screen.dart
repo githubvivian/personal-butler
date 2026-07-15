@@ -162,9 +162,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _menuTile(Icons.security, '隐私与安全', () => _showPrivacy()),
             const SizedBox(height: 12),
             OutlinedButton.icon(
-              onPressed: () {
-                context.read<AppState>().lock();
-              },
+              onPressed: _lock,
               icon: const Icon(Icons.fingerprint),
               label: const Text('立即锁定'),
             ),
@@ -172,6 +170,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _lock() async {
+    final appState = context.read<AppState>();
+    try {
+      await appState.lock();
+    } catch (_) {
+      if (!mounted) return;
+      snack(context, '会话已锁定，但安全清理未完成，请稍后重试');
+    }
   }
 
   Future<void> _openNotificationSettings() async {

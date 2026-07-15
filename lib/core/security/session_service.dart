@@ -2,6 +2,15 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:local_auth/local_auth.dart';
 import '../constants/app_constants.dart';
 
+bool isSessionWithinLifetime({
+  required DateTime now,
+  required DateTime unlockedAt,
+  required Duration lifetime,
+}) {
+  final elapsed = now.difference(unlockedAt);
+  return !elapsed.isNegative && elapsed < lifetime;
+}
+
 class SessionService {
   SessionService._();
   static final SessionService instance = SessionService._();
@@ -33,8 +42,11 @@ class SessionService {
     if (raw == null) return false;
     final unlockedAt = DateTime.tryParse(raw);
     if (unlockedAt == null) return false;
-    return DateTime.now().difference(unlockedAt) <
-        const Duration(hours: AppConstants.sessionHours);
+    return isSessionWithinLifetime(
+      now: DateTime.now(),
+      unlockedAt: unlockedAt,
+      lifetime: const Duration(hours: AppConstants.sessionHours),
+    );
   }
 
   Future<void> markUnlocked() async {
@@ -67,8 +79,11 @@ class SessionService {
   DateTime? vaultUnlockedAt;
   bool get isVaultSessionValid {
     if (vaultUnlockedAt == null) return false;
-    return DateTime.now().difference(vaultUnlockedAt!) <
-        const Duration(minutes: 5);
+    return isSessionWithinLifetime(
+      now: DateTime.now(),
+      unlockedAt: vaultUnlockedAt!,
+      lifetime: const Duration(minutes: 5),
+    );
   }
 
   void unlockVault() => vaultUnlockedAt = DateTime.now();

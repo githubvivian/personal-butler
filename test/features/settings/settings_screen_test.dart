@@ -18,6 +18,7 @@ const _exactAlarmSuccessMessage = '精确闹钟权限已开启，会议提醒已
 const _exactAlarmDeniedMessage = '未获得精确闹钟权限，会议提醒仍将使用普通模式';
 const _exactAlarmRequestFailureMessage = '无法请求精确闹钟权限，请稍后重试';
 const _exactAlarmReconcileFailureMessage = '权限已开启，但会议提醒重新同步失败，请稍后重试';
+const _lockFailureMessage = '会话已锁定，但安全清理未完成，请稍后重试';
 
 void main() {
   Future<void> pumpSettings(
@@ -135,6 +136,88 @@ void main() {
     completer.complete(SystemSettingsLaunchResult.unavailable);
     await tester.pump();
 
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'lock fails closed immediately and consumes persistent deletion failure',
+    (tester) async {
+      const sensitiveMarker = 'session-private-path-token-2d61';
+      final deletion = Completer<void>();
+      var deletionCalls = 0;
+      final appState = _SettingsAppState(
+        initiallyUnlocked: true,
+        sessionLock: () {
+          deletionCalls++;
+          return deletion.future;
+        },
+      );
+      await appState.bootstrap();
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<AppState>.value(
+          value: appState,
+          child: const MaterialApp(home: SettingsScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text('立即锁定'),
+        200,
+        scrollable: find.byType(Scrollable),
+      );
+
+      await tester.tap(find.text('立即锁定'));
+      await tester.pump();
+
+      expect(deletionCalls, 1);
+      expect(appState.unlocked, isFalse);
+      expect(find.text(_lockFailureMessage), findsNothing);
+
+      deletion.completeError(StateError(sensitiveMarker));
+      await tester.pumpAndSettle();
+
+      expect(find.text(_lockFailureMessage), findsOneWidget);
+      expect(find.textContaining(sensitiveMarker), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('lock failure after disposal does not use stale context', (
+    tester,
+  ) async {
+    const sensitiveMarker = 'disposed-session-private-path-token-5a84';
+    final deletion = Completer<void>();
+    final appState = _SettingsAppState(
+      initiallyUnlocked: true,
+      sessionLock: () => deletion.future,
+    );
+    await appState.bootstrap();
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<AppState>.value(
+        value: appState,
+        child: const MaterialApp(home: SettingsScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('立即锁定'),
+      200,
+      scrollable: find.byType(Scrollable),
+    );
+
+    await tester.tap(find.text('立即锁定'));
+    await tester.pump();
+    expect(appState.unlocked, isFalse);
+
+    await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+    expect(find.byType(SettingsScreen), findsNothing);
+
+    deletion.completeError(StateError(sensitiveMarker));
+    await tester.pump();
+
+    expect(find.textContaining(sensitiveMarker), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -386,13 +469,16 @@ void main() {
 }
 
 class _SettingsAppState extends AppState {
-  _SettingsAppState()
-    : super(
-        initializeNotifications: () async {},
-        readInitialized: () async => false,
-        validateSession: () async => false,
-        syncReminders: () async {},
-      );
+  _SettingsAppState({
+    bool initiallyUnlocked = false,
+    SessionLockAction? sessionLock,
+  }) : super(
+         initializeNotifications: () async {},
+         readInitialized: () async => initiallyUnlocked,
+         validateSession: () async => initiallyUnlocked,
+         syncReminders: () async {},
+         lockSession: sessionLock,
+       );
 
   final _emptyItems = _EmptyItemRepository();
   final _emptyIdeas = _EmptyIdeaRepository();

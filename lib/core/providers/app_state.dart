@@ -10,6 +10,7 @@ import '../services/reminder_sync_service.dart';
 
 typedef BootstrapAction = Future<void> Function();
 typedef BootstrapCheck = Future<bool> Function();
+typedef SessionLockAction = Future<void> Function();
 
 class AppState extends ChangeNotifier {
   final items = ItemRepository();
@@ -23,6 +24,7 @@ class AppState extends ChangeNotifier {
   final BootstrapCheck _readInitialized;
   final BootstrapCheck _validateSession;
   final BootstrapAction? _syncRemindersCallback;
+  final SessionLockAction _lockSession;
 
   bool _unlocked = false;
   bool _initialized = false;
@@ -35,13 +37,15 @@ class AppState extends ChangeNotifier {
     BootstrapCheck? readInitialized,
     BootstrapCheck? validateSession,
     BootstrapAction? syncReminders,
+    SessionLockAction? lockSession,
   }) : _initializeNotifications =
            initializeNotifications ?? NotificationService.instance.init,
        _readInitialized =
            readInitialized ?? SessionService.instance.isAppInitialized,
        _validateSession =
            validateSession ?? SessionService.instance.isSessionValid,
-       _syncRemindersCallback = syncReminders;
+       _syncRemindersCallback = syncReminders,
+       _lockSession = lockSession ?? SessionService.instance.lock;
 
   bool get unlocked => _unlocked;
   bool get initialized => _initialized;
@@ -137,11 +141,11 @@ class AppState extends ChangeNotifier {
     return ok;
   }
 
-  void lock() {
-    session.lock();
+  Future<void> lock() async {
     session.lockVault();
     _unlocked = false;
     notifyListeners();
+    await _lockSession();
   }
 
   void refresh() => notifyListeners();
