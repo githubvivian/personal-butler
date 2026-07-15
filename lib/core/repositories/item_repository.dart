@@ -6,10 +6,18 @@ import '../services/notification_service.dart';
 import '../services/reminder_sync_service.dart';
 
 class ItemRepository {
+  ItemRepository({Future<Database> Function()? databaseProvider})
+    : _databaseProvider = databaseProvider ?? _defaultDatabaseProvider;
+
   final _uuid = const Uuid();
+  final Future<Database> Function() _databaseProvider;
+
+  static Future<Database> _defaultDatabaseProvider() {
+    return DatabaseHelper.instance.database;
+  }
 
   Future<List<ItemModel>> getInboxItems() async {
-    final db = await DatabaseHelper.instance.database;
+    final db = await _databaseProvider();
     final rows = await db.query(
       'items',
       where: 'inbox_status = ? AND is_deleted = 0',
@@ -20,7 +28,7 @@ class ItemRepository {
   }
 
   Future<List<ItemModel>> getPendingItems({bool includeDone = false}) async {
-    final db = await DatabaseHelper.instance.database;
+    final db = await _databaseProvider();
     final types = ['reimbursement', 'review'];
     final placeholders = List.filled(types.length, '?').join(',');
     var where =
@@ -39,25 +47,24 @@ class ItemRepository {
   }
 
   Future<List<ItemModel>> getCalendarItems(DateTime day) async {
-    final db = await DatabaseHelper.instance.database;
+    final db = await _databaseProvider();
     final start = DateTime(day.year, day.month, day.day);
     final end = start.add(const Duration(days: 1));
     final rows = await db.query(
       'items',
       where:
           'is_deleted = 0 AND inbox_status = ? AND start_at >= ? AND start_at < ?',
-      whereArgs: [
-        'confirmed',
-        start.toIso8601String(),
-        end.toIso8601String(),
-      ],
+      whereArgs: ['confirmed', start.toIso8601String(), end.toIso8601String()],
       orderBy: 'start_at ASC',
     );
     return rows.map(ItemModel.fromMap).toList();
   }
 
-  Future<List<ItemModel>> getFamilyItems(DateTime day, List<String> owners) async {
-    final db = await DatabaseHelper.instance.database;
+  Future<List<ItemModel>> getFamilyItems(
+    DateTime day,
+    List<String> owners,
+  ) async {
+    final db = await _databaseProvider();
     final start = DateTime(day.year, day.month, day.day);
     final end = start.add(const Duration(days: 1));
     if (owners.isEmpty) return [];
@@ -78,14 +85,14 @@ class ItemRepository {
   }
 
   Future<ItemModel?> getById(String id) async {
-    final db = await DatabaseHelper.instance.database;
+    final db = await _databaseProvider();
     final rows = await db.query('items', where: 'id = ?', whereArgs: [id]);
     if (rows.isEmpty) return null;
     return ItemModel.fromMap(rows.first);
   }
 
   Future<List<ItemModel>> getAllActiveConfirmed() async {
-    final db = await DatabaseHelper.instance.database;
+    final db = await _databaseProvider();
     final rows = await db.query(
       'items',
       where: 'is_deleted = 0 AND inbox_status = ?',
@@ -95,7 +102,7 @@ class ItemRepository {
   }
 
   Future<void> save(ItemModel item) async {
-    final db = await DatabaseHelper.instance.database;
+    final db = await _databaseProvider();
     await db.insert(
       'items',
       item.toMap(),
@@ -118,7 +125,9 @@ class ItemRepository {
       title: title.isEmpty ? '新事项' : title,
       owner: owner,
       inboxStatus: inboxStatus,
-      pendingStatus: type == 'reimbursement' || type == 'review' ? 'submitted' : null,
+      pendingStatus: type == 'reimbursement' || type == 'review'
+          ? 'submitted'
+          : null,
       nextFollowUpAt: type == 'reimbursement' || type == 'review'
           ? now.add(const Duration(days: 7))
           : null,
@@ -130,8 +139,50 @@ class ItemRepository {
     return item;
   }
 
+  Future<ItemModel> createOcrDraftWithAttachment({
+    required String ocrText,
+    required String assetId,
+    String title = '',
+    String? displayName,
+    String owner = 'self',
+  }) async {
+    if (ocrText.trim().isEmpty) {
+      throw ArgumentError('OCR text must not be blank.');
+    }
+    if (assetId.trim().isEmpty) {
+      throw ArgumentError('Asset ID must not be blank.');
+    }
+
+    final now = DateTime.now();
+    final item = ItemModel(
+      id: _uuid.v4(),
+      type: 'meeting',
+      title: title.isEmpty ? '新事项' : title,
+      owner: owner,
+      inboxStatus: 'inbox',
+      ocrText: ocrText,
+      createdAt: now,
+      updatedAt: now,
+    );
+    final attachment = AttachmentModel(
+      id: _uuid.v4(),
+      itemId: item.id,
+      assetId: assetId,
+      displayName: displayName,
+      createdAt: now,
+    );
+    final db = await _databaseProvider();
+
+    await db.transaction((txn) async {
+      await txn.insert('items', item.toMap());
+      await txn.insert('attachments', attachment.toMap());
+    });
+
+    return item;
+  }
+
   Future<void> softDelete(String id) async {
-    final db = await DatabaseHelper.instance.database;
+    final db = await _databaseProvider();
     await db.update(
       'items',
       {'is_deleted': 1, 'updated_at': DateTime.now().toIso8601String()},
@@ -139,19 +190,23 @@ class ItemRepository {
       whereArgs: [id],
     );
     await NotificationService.instance.cancel(id.hashCode);
-    await NotificationService.instance.cancel(ReminderSyncService.pendingId(id));
+    await NotificationService.instance.cancel(
+      ReminderSyncService.pendingId(id),
+    );
   }
 
   Future<void> hardDelete(String id) async {
-    final db = await DatabaseHelper.instance.database;
+    final db = await _databaseProvider();
     await db.delete('attachments', where: 'item_id = ?', whereArgs: [id]);
     await db.delete('items', where: 'id = ?', whereArgs: [id]);
     await NotificationService.instance.cancel(id.hashCode);
-    await NotificationService.instance.cancel(ReminderSyncService.pendingId(id));
+    await NotificationService.instance.cancel(
+      ReminderSyncService.pendingId(id),
+    );
   }
 
   Future<List<AttachmentModel>> getAttachments(String itemId) async {
-    final db = await DatabaseHelper.instance.database;
+    final db = await _databaseProvider();
     final rows = await db.query(
       'attachments',
       where: 'item_id = ?',
@@ -165,7 +220,7 @@ class ItemRepository {
     required String assetId,
     String? displayName,
   }) async {
-    final db = await DatabaseHelper.instance.database;
+    final db = await _databaseProvider();
     await db.insert('attachments', {
       'id': _uuid.v4(),
       'item_id': itemId,
@@ -176,7 +231,7 @@ class ItemRepository {
   }
 
   Future<Map<String, int>> getTodayStats() async {
-    final db = await DatabaseHelper.instance.database;
+    final db = await _databaseProvider();
     final today = DateTime.now();
     final start = DateTime(today.year, today.month, today.day);
     final end = start.add(const Duration(days: 1));
