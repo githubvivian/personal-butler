@@ -4,7 +4,10 @@ import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../database/database_helper.dart';
+import '../repositories/item_repository.dart';
+import '../repositories/other_repositories.dart';
 import '../security/encryption_service.dart';
+import 'reminder_sync_service.dart';
 
 enum BackupImportOutcome { imported, cancelled }
 
@@ -19,14 +22,27 @@ class BackupImportSelectionException implements Exception {
 
 typedef BackupDataReplacer =
     Future<void> Function(Map<String, List<Map<String, dynamic>>> data);
+typedef ReminderReconcileAction = Future<void> Function();
 
 class BackupService {
-  BackupService({BackupDataReplacer? replaceAllData})
-    : _replaceAllData =
-          replaceAllData ?? DatabaseHelper.instance.replaceAllData;
+  BackupService({
+    BackupDataReplacer? replaceAllData,
+    ReminderReconcileAction? reconcileReminders,
+  }) : _replaceAllData =
+           replaceAllData ?? DatabaseHelper.instance.replaceAllData,
+       _reconcileReminders =
+           reconcileReminders ?? _reconcileRemindersAfterRestore;
 
   final _enc = EncryptionService.instance;
   final BackupDataReplacer _replaceAllData;
+  final ReminderReconcileAction _reconcileReminders;
+
+  static Future<void> _reconcileRemindersAfterRestore() {
+    return ReminderSyncService.instance.reconcileAll(
+      items: ItemRepository(),
+      birthdays: BirthdayRepository(),
+    );
+  }
 
   Future<String> exportEncryptedBackup(String password) async {
     final data = await DatabaseHelper.instance.exportAllData();
@@ -70,6 +86,9 @@ class BackupService {
     final json = await _enc.decryptBackupPayload(content, password);
     final data = _parseBackupPayload(json);
     await _replaceAllData(data);
+    try {
+      await _reconcileReminders();
+    } catch (_) {}
     return BackupImportOutcome.imported;
   }
 

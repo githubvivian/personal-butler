@@ -66,9 +66,13 @@ Future<void> _expectEnvelopeRejectedBeforeReplace(
 ) async {
   await _selectRawBackupContent(content);
   var replaceCalls = 0;
+  var reconcileCalls = 0;
   final service = BackupService(
     replaceAllData: (_) async {
       replaceCalls++;
+    },
+    reconcileReminders: () async {
+      reconcileCalls++;
     },
   );
 
@@ -83,6 +87,7 @@ Future<void> _expectEnvelopeRejectedBeforeReplace(
     ),
   );
   expect(replaceCalls, 0);
+  expect(reconcileCalls, 0);
 }
 
 Future<void> _expectPayloadRejectedBeforeReplace(
@@ -91,9 +96,13 @@ Future<void> _expectPayloadRejectedBeforeReplace(
 ) async {
   await _selectEncryptedPayload(payload);
   var replaceCalls = 0;
+  var reconcileCalls = 0;
   final service = BackupService(
     replaceAllData: (_) async {
       replaceCalls++;
+    },
+    reconcileReminders: () async {
+      reconcileCalls++;
     },
   );
 
@@ -108,6 +117,7 @@ Future<void> _expectPayloadRejectedBeforeReplace(
     ),
   );
   expect(replaceCalls, 0);
+  expect(reconcileCalls, 0);
 }
 
 void main() {
@@ -121,10 +131,16 @@ void main() {
   test('returns cancelled when the system file picker is dismissed', () async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(_filePickerChannel, (_) async => null);
+    var reconcileCalls = 0;
 
-    final outcome = await BackupService().importEncryptedBackup('secret1');
+    final outcome = await BackupService(
+      reconcileReminders: () async {
+        reconcileCalls++;
+      },
+    ).importEncryptedBackup('secret1');
 
     expect(outcome, BackupImportOutcome.cancelled);
+    expect(reconcileCalls, 0);
   });
 
   test('rejects a selected backup with no readable path', () async {
@@ -136,10 +152,16 @@ void main() {
           ],
         );
 
+    var reconcileCalls = 0;
     await expectLater(
-      BackupService().importEncryptedBackup('secret1'),
+      BackupService(
+        reconcileReminders: () async {
+          reconcileCalls++;
+        },
+      ).importEncryptedBackup('secret1'),
       throwsA(isA<BackupImportSelectionException>()),
     );
+    expect(reconcileCalls, 0);
   });
 
   test('rejects a picker result containing more than one file', () async {
@@ -162,10 +184,16 @@ void main() {
           ],
         );
 
+    var reconcileCalls = 0;
     await expectLater(
-      BackupService().importEncryptedBackup('secret1'),
+      BackupService(
+        reconcileReminders: () async {
+          reconcileCalls++;
+        },
+      ).importEncryptedBackup('secret1'),
       throwsA(isA<BackupImportSelectionException>()),
     );
+    expect(reconcileCalls, 0);
   });
 
   test(
@@ -180,6 +208,7 @@ void main() {
           replaceCalls++;
           receivedData = data;
         },
+        reconcileReminders: () async {},
       ).importEncryptedBackup(_backupPassword);
 
       expect(outcome, BackupImportOutcome.imported);
@@ -188,6 +217,60 @@ void main() {
       expect(receivedData?.values, everyElement(isEmpty));
     },
   );
+
+  test('reconciles reminders after replacing restored data', () async {
+    await _selectEncryptedPayload(_validPayload());
+    final events = <String>[];
+
+    final outcome = await BackupService(
+      replaceAllData: (_) async {
+        events.add('replace');
+      },
+      reconcileReminders: () async {
+        events.add('reconcile');
+      },
+    ).importEncryptedBackup(_backupPassword);
+
+    expect(outcome, BackupImportOutcome.imported);
+    expect(events, ['replace', 'reconcile']);
+  });
+
+  test('returns imported when reminder reconciliation fails', () async {
+    await _selectEncryptedPayload(_validPayload());
+    var replaceCompleted = false;
+
+    final outcome = await BackupService(
+      replaceAllData: (_) async {
+        replaceCompleted = true;
+      },
+      reconcileReminders: () async {
+        throw StateError('notification side effect failed');
+      },
+    ).importEncryptedBackup(_backupPassword);
+
+    expect(outcome, BackupImportOutcome.imported);
+    expect(replaceCompleted, isTrue);
+  });
+
+  test('propagates replace failure without reconciling reminders', () async {
+    await _selectEncryptedPayload(_validPayload());
+    final failure = StateError('database replacement failed');
+    var reconcileCalls = 0;
+    final service = BackupService(
+      replaceAllData: (_) async {
+        throw failure;
+      },
+      reconcileReminders: () async {
+        reconcileCalls++;
+      },
+    );
+
+    await expectLater(
+      service.importEncryptedBackup(_backupPassword),
+      throwsA(same(failure)),
+    );
+    expect(reconcileCalls, 0);
+  });
 
   test('imports a valid non-empty row without losing field values', () async {
     final payload = _validPayload();
@@ -209,6 +292,7 @@ void main() {
         replaceCalls++;
         receivedData = data;
       },
+      reconcileReminders: () async {},
     ).importEncryptedBackup(_backupPassword);
 
     expect(outcome, BackupImportOutcome.imported);
@@ -251,9 +335,13 @@ void main() {
         );
         await _selectRawBackupContent(encrypted);
         var replaceCalls = 0;
+        var reconcileCalls = 0;
         final service = BackupService(
           replaceAllData: (_) async {
             replaceCalls++;
+          },
+          reconcileReminders: () async {
+            reconcileCalls++;
           },
         );
 
@@ -279,6 +367,7 @@ void main() {
           ),
         );
         expect(replaceCalls, 0);
+        expect(reconcileCalls, 0);
       },
     );
 
