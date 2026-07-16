@@ -22,6 +22,24 @@ void main() {
         .setMockMethodCallHandler(_filePickerChannel, null);
   });
 
+  testWidgets('backup screen warns about non-portable protected data', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const MaterialApp(home: BackupScreen()));
+
+    expect(find.textContaining('不包含相册原图'), findsOneWidget);
+    expect(find.textContaining('卸载应用、清除应用数据或换机后可能无法解密'), findsOneWidget);
+    expect(find.textContaining('请勿将其视为完整换机或灾难恢复备份'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), 'secret1');
+    await tester.tap(find.text('从备份恢复'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('密码保险库内容可能无法解密'), findsOneWidget);
+    expect(find.textContaining('相册原图不会恢复'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'cancelling backup selection does not report success or refresh data',
     (tester) async {
@@ -41,7 +59,7 @@ void main() {
       await tester.tap(find.text('继续'));
       await tester.pumpAndSettle();
 
-      expect(find.text('恢复成功'), findsNothing);
+      expect(find.textContaining('数据库记录已恢复'), findsNothing);
       expect(appState.refreshCount, 0);
       expect(
         tester
@@ -106,7 +124,7 @@ void main() {
     expect(backupService.imports, 1);
     expect(itemInvalidations, 1);
     expect(appState.refreshCount, 1);
-    expect(find.text('恢复成功'), findsOneWidget);
+    expect(find.text('数据库记录已恢复；请核对保险库和相册引用'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

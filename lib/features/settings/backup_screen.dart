@@ -56,7 +56,10 @@ class _BackupScreenState extends State<BackupScreen> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('恢复备份'),
-        content: const Text('恢复将覆盖当前全部数据，是否继续？'),
+        content: const Text(
+          '恢复将覆盖当前全部数据库记录。若备份来自卸载前、清除应用数据前或其他设备，'
+          '密码保险库内容可能无法解密；相册原图不会恢复。是否继续？',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -78,7 +81,7 @@ class _BackupScreenState extends State<BackupScreen> {
       appState.items.invalidateAfterExternalWrite();
       appState.refresh();
       if (!mounted) return;
-      snack(context, '恢复成功');
+      snack(context, '数据库记录已恢复；请核对保险库和相册引用');
     } catch (e) {
       if (!mounted) return;
       snack(context, '恢复失败，请检查密码与文件');
@@ -96,7 +99,8 @@ class _BackupScreenState extends State<BackupScreen> {
         children: [
           const AppCard(
             child: Text(
-              '备份文件使用 AES 加密，扩展名 .pbak。请妥善保管备份密码，丢失将无法恢复。',
+              '当前 .pbak 仅备份数据库记录，不包含相册原图。密码保险库密文字段依赖本机安全密钥，'
+              '卸载应用、清除应用数据或换机后可能无法解密。请勿将其视为完整换机或灾难恢复备份。',
               style: TextStyle(color: AppColors.textSecondary),
             ),
           ),
