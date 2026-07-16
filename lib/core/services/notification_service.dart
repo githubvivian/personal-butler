@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
@@ -19,13 +20,39 @@ Future<void> scheduleExactAlarmWithPermissionFallback(
 
 class NotificationService {
   NotificationService._();
+
+  @visibleForTesting
+  NotificationService.forTesting() : this._();
+
   static final NotificationService instance = NotificationService._();
 
   final _plugin = FlutterLocalNotificationsPlugin();
   bool _ready = false;
+  Future<void>? _initFuture;
 
-  Future<void> init() async {
-    if (_ready) return;
+  Future<void> init() {
+    if (_ready) return Future<void>.value();
+    final inFlight = _initFuture;
+    if (inFlight != null) return inFlight;
+
+    final future = _initialize();
+    _initFuture = future;
+    future.then<void>(
+      (_) => _clearInitFuture(future),
+      onError: (Object error, StackTrace stackTrace) {
+        _clearInitFuture(future);
+      },
+    );
+    return future;
+  }
+
+  void _clearInitFuture(Future<void> future) {
+    if (identical(_initFuture, future)) {
+      _initFuture = null;
+    }
+  }
+
+  Future<void> _initialize() async {
     tz.initializeTimeZones();
     try {
       final tzInfo = await FlutterTimezone.getLocalTimezone();

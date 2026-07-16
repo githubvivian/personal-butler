@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -97,6 +99,42 @@ void main() {
       ]);
     });
   });
+
+  test(
+    'coalesces concurrent initialization and retries after failure',
+    () async {
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      final initializeGate = Completer<void>();
+      var initializeCalls = 0;
+      messenger.setMockMethodCallHandler(_timezoneChannel, (_) async {
+        return 'Asia/Shanghai';
+      });
+      messenger.setMockMethodCallHandler(_notificationChannel, (call) async {
+        if (call.method == 'initialize') {
+          initializeCalls++;
+          if (initializeCalls == 1) {
+            await initializeGate.future;
+            throw StateError('notification initialization failed');
+          }
+          return true;
+        }
+        return null;
+      });
+
+      final service = NotificationService.forTesting();
+      final first = service.init();
+      final second = service.init();
+
+      expect(identical(first, second), isTrue);
+      initializeGate.complete();
+      await expectLater(first, throwsA(isA<PlatformException>()));
+      await expectLater(second, throwsA(isA<PlatformException>()));
+
+      await service.init();
+      expect(initializeCalls, 2);
+    },
+  );
 
   test(
     'pendingNotificationIds initializes and maps pending requests',
