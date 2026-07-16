@@ -5,6 +5,7 @@ import '../models/models.dart';
 import '../security/encryption_service.dart';
 import '../services/notification_service.dart';
 import '../services/reminder_sync_service.dart';
+import '../utils/birthday_date_helper.dart';
 
 class BirthdayRepository {
   BirthdayRepository({
@@ -37,6 +38,13 @@ class BirthdayRepository {
   }
 
   Future<void> save(BirthdayModel model) async {
+    if (!BirthdayDateHelper.isValidDate(
+      isLunar: model.isLunar,
+      month: model.month,
+      day: model.day,
+    )) {
+      throw ArgumentError('Invalid birthday date.');
+    }
     final db = await _databaseProvider();
     await db.insert(
       'birthdays',

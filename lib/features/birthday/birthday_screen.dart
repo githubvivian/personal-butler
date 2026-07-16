@@ -6,6 +6,7 @@ import '../../core/models/models.dart';
 import '../../core/providers/app_state.dart';
 import '../../core/repositories/other_repositories.dart';
 import '../../core/services/notification_permission_coordinator.dart';
+import '../../core/utils/birthday_date_helper.dart';
 import '../../core/utils/lunar_date_helper.dart';
 import '../widgets/common_widgets.dart';
 
@@ -41,11 +42,11 @@ class _BirthdayScreenState extends State<BirthdayScreen> {
   }
 
   Future<void> _add() async {
-    final name = TextEditingController();
-    final relation = TextEditingController();
+    var nameInput = '';
+    var relationInput = '';
+    var monthInput = '1';
+    var dayInput = '1';
     bool isLunar = false;
-    int month = 1;
-    int day = 1;
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => StatefulBuilder(
@@ -55,8 +56,14 @@ class _BirthdayScreenState extends State<BirthdayScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                TextField(controller: name, decoration: const InputDecoration(labelText: '姓名')),
-                TextField(controller: relation, decoration: const InputDecoration(labelText: '关系')),
+                TextField(
+                  decoration: const InputDecoration(labelText: '姓名'),
+                  onChanged: (value) => nameInput = value,
+                ),
+                TextField(
+                  decoration: const InputDecoration(labelText: '关系'),
+                  onChanged: (value) => relationInput = value,
+                ),
                 SwitchListTile(
                   title: const Text('农历生日'),
                   value: isLunar,
@@ -65,18 +72,20 @@ class _BirthdayScreenState extends State<BirthdayScreen> {
                 Row(
                   children: [
                     Expanded(
-                      child: TextField(
+                      child: TextFormField(
+                        initialValue: monthInput,
                         decoration: const InputDecoration(labelText: '月'),
                         keyboardType: TextInputType.number,
-                        onChanged: (v) => month = int.tryParse(v) ?? month,
+                        onChanged: (value) => monthInput = value,
                       ),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: TextField(
+                      child: TextFormField(
+                        initialValue: dayInput,
                         decoration: const InputDecoration(labelText: '日'),
                         keyboardType: TextInputType.number,
-                        onChanged: (v) => day = int.tryParse(v) ?? day,
+                        onChanged: (value) => dayInput = value,
                       ),
                     ),
                   ],
@@ -91,7 +100,21 @@ class _BirthdayScreenState extends State<BirthdayScreen> {
         ),
       ),
     );
-    if (!mounted || ok != true || name.text.trim().isEmpty) return;
+    final nameValue = nameInput.trim();
+    final relationValue = relationInput.trim();
+    final month = int.tryParse(monthInput.trim());
+    final day = int.tryParse(dayInput.trim());
+    if (!mounted || ok != true || nameValue.isEmpty) return;
+    if (month == null ||
+        day == null ||
+        !BirthdayDateHelper.isValidDate(
+          isLunar: isLunar,
+          month: month,
+          day: day,
+        )) {
+      snack(context, '请输入有效的生日日期');
+      return;
+    }
     final repository =
         widget.birthdayRepository ?? context.read<AppState>().birthdays;
     final permissionResult =
@@ -101,8 +124,8 @@ class _BirthdayScreenState extends State<BirthdayScreen> {
               requiresPermission: true,
               persist: () async {
                 await repository.create(
-                  name: name.text.trim(),
-                  relation: relation.text.trim(),
+                  name: nameValue,
+                  relation: relationValue,
                   isLunar: isLunar,
                   month: month,
                   day: day,
@@ -139,13 +162,14 @@ class _BirthdayScreenState extends State<BirthdayScreen> {
   }
 
   Widget _card(BirthdayModel b) {
-    final next = LunarDateHelper.nextSolarOccurrence(
+    final countdown = BirthdayDateHelper.nextCountdown(
       isLunar: b.isLunar,
       month: b.month,
       day: b.day,
       isLeapMonth: b.isLeapMonth,
     );
-    final days = next?.difference(DateTime.now()).inDays;
+    final next = countdown?.date;
+    final days = countdown?.daysUntil;
     final lunarLabel = b.isLunar
         ? LunarDateHelper.formatLunarLabel(b.month, b.day, isLeap: b.isLeapMonth)
         : '${b.month}月${b.day}日';

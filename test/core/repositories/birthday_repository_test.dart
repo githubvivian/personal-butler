@@ -27,6 +27,98 @@ void main() {
 
   group('BirthdayRepository reminder side effects', () {
     test(
+      'create rejects an invalid solar date before database access or reminder sync',
+      () async {
+        var databaseRequests = 0;
+        var syncCount = 0;
+        final repository = BirthdayRepository(
+          databaseProvider: () async {
+            databaseRequests += 1;
+            return database;
+          },
+          syncBirthdayReminder: (_) async {
+            syncCount += 1;
+          },
+          cancelNotification: (_) async {},
+        );
+
+        await expectLater(
+          repository.create(
+            name: 'Invalid solar date',
+            isLunar: false,
+            month: 2,
+            day: 30,
+          ),
+          throwsArgumentError,
+        );
+
+        expect(databaseRequests, 0);
+        expect(syncCount, 0);
+        expect(await database.query('birthdays'), isEmpty);
+      },
+    );
+
+    test(
+      'save rejects an invalid lunar date before database access or reminder sync',
+      () async {
+        var databaseRequests = 0;
+        var syncCount = 0;
+        final repository = BirthdayRepository(
+          databaseProvider: () async {
+            databaseRequests += 1;
+            return database;
+          },
+          syncBirthdayReminder: (_) async {
+            syncCount += 1;
+          },
+          cancelNotification: (_) async {},
+        );
+        final model = BirthdayModel(
+          id: 'invalid-lunar-birthday',
+          name: 'Invalid lunar date',
+          isLunar: true,
+          month: 12,
+          day: 31,
+          createdAt: DateTime.utc(2026, 7, 16),
+        );
+
+        await expectLater(repository.save(model), throwsArgumentError);
+
+        expect(databaseRequests, 0);
+        expect(syncCount, 0);
+        expect(await database.query('birthdays'), isEmpty);
+      },
+    );
+
+    test('create accepts and persists a recurring solar leap day', () async {
+      var syncCount = 0;
+      final repository = BirthdayRepository(
+        databaseProvider: () async => database,
+        syncBirthdayReminder: (_) async {
+          syncCount += 1;
+        },
+        cancelNotification: (_) async {},
+      );
+
+      final model = await repository.create(
+        name: 'Leap day',
+        isLunar: false,
+        month: 2,
+        day: 29,
+      );
+
+      expect(syncCount, 1);
+      expect(
+        await database.query(
+          'birthdays',
+          where: 'id = ?',
+          whereArgs: [model.id],
+        ),
+        hasLength(1),
+      );
+    });
+
+    test(
       'create returns model and commits row when reminder sync throws',
       () async {
         var syncCount = 0;
