@@ -3,10 +3,13 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../../core/models/models.dart';
 import '../../core/providers/app_state.dart';
+import '../../core/repositories/schedule_repository.dart';
 import '../widgets/common_widgets.dart';
 
 class ScheduleSettingsScreen extends StatefulWidget {
-  const ScheduleSettingsScreen({super.key});
+  const ScheduleSettingsScreen({super.key, this.scheduleRepository});
+
+  final ScheduleRepository? scheduleRepository;
 
   @override
   State<ScheduleSettingsScreen> createState() => _ScheduleSettingsScreenState();
@@ -18,6 +21,9 @@ class _ScheduleSettingsScreenState extends State<ScheduleSettingsScreen> {
   int? _semesterEndWeek;
   DateTime? _semesterStartDate;
   bool _saving = false;
+  DataLoadStatus _loadStatus = DataLoadStatus.loading;
+  int _loadGeneration = 0;
+  int _saveGeneration = 0;
 
   @override
   void initState() {
@@ -25,17 +31,53 @@ class _ScheduleSettingsScreenState extends State<ScheduleSettingsScreen> {
     _load();
   }
 
+  @override
+  void didUpdateWidget(covariant ScheduleSettingsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.scheduleRepository != widget.scheduleRepository) {
+      _saveGeneration++;
+      _saving = false;
+      _load();
+    }
+  }
+
   Future<void> _load() async {
-    final settings = await context.read<AppState>().schedules.getSettings();
-    setState(() {
-      _settings = settings;
-      _semesterStartWeek = settings.semesterStartWeek;
-      _semesterEndWeek = settings.semesterEndWeek;
-      _semesterStartDate = settings.semesterStartDate;
-    });
+    final generation = ++_loadGeneration;
+    final schedules =
+        widget.scheduleRepository ?? context.read<AppState>().schedules;
+    if (mounted) {
+      setState(() {
+        _loadStatus = DataLoadStatus.loading;
+        _settings = null;
+        _semesterStartWeek = null;
+        _semesterEndWeek = null;
+        _semesterStartDate = null;
+      });
+    }
+    try {
+      final settings = await schedules.getSettings();
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() {
+        _loadStatus = DataLoadStatus.ready;
+        _settings = settings;
+        _semesterStartWeek = settings.semesterStartWeek;
+        _semesterEndWeek = settings.semesterEndWeek;
+        _semesterStartDate = settings.semesterStartDate;
+      });
+    } catch (_) {
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() {
+        _loadStatus = DataLoadStatus.failed;
+        _settings = null;
+        _semesterStartWeek = null;
+        _semesterEndWeek = null;
+        _semesterStartDate = null;
+      });
+    }
   }
 
   Future<void> _save() async {
+    if (_saving || _loadStatus != DataLoadStatus.ready) return;
     final start = _semesterStartWeek;
     final end = _semesterEndWeek;
     if (start == null || end == null) return;
@@ -43,19 +85,31 @@ class _ScheduleSettingsScreenState extends State<ScheduleSettingsScreen> {
       snack(context, '开始周不能大于结束周');
       return;
     }
+    final schedules =
+        widget.scheduleRepository ?? context.read<AppState>().schedules;
+    final settings = _settings;
+    final generation = ++_saveGeneration;
     setState(() => _saving = true);
-    await context.read<AppState>().schedules.saveSettings(
-      ScheduleSettingsModel(
-        id: _settings?.id ?? 'default',
-        semesterStartWeek: start,
-        semesterEndWeek: end,
-        semesterStartDate: _semesterStartDate,
-        updatedAt: DateTime.now(),
-      ),
-    );
-    if (!mounted) return;
-    setState(() => _saving = false);
-    snack(context, '课表设置已保存');
+    try {
+      await schedules.saveSettings(
+        ScheduleSettingsModel(
+          id: settings?.id ?? 'default',
+          semesterStartWeek: start,
+          semesterEndWeek: end,
+          semesterStartDate: _semesterStartDate,
+          updatedAt: DateTime.now(),
+        ),
+      );
+      if (!mounted || generation != _saveGeneration) return;
+      snack(context, '课表设置已保存');
+    } catch (_) {
+      if (!mounted || generation != _saveGeneration) return;
+      snack(context, '保存课表设置失败，请重试');
+    } finally {
+      if (mounted && generation == _saveGeneration) {
+        setState(() => _saving = false);
+      }
+    }
   }
 
   @override
@@ -76,11 +130,17 @@ class _ScheduleSettingsScreenState extends State<ScheduleSettingsScreen> {
             updatedAt: _settings?.updatedAt ?? DateTime.now(),
           ).currentWeekFor(DateTime.now());
 
+    final settings = _settings;
     return Scaffold(
       appBar: AppBar(title: const Text('课表设置')),
-      body: _settings == null
+      body: _loadStatus == DataLoadStatus.loading
+          ? const Center(child: CircularProgressIndicator())
+          : _loadStatus == DataLoadStatus.failed
+          ? Center(child: DataLoadFailure(onRetry: _load))
+          : settings == null
           ? const Center(child: CircularProgressIndicator())
           : ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.all(16),
               children: [
                 AppCard(
@@ -113,16 +173,23 @@ class _ScheduleSettingsScreenState extends State<ScheduleSettingsScreen> {
                                 ).format(startDate),
                         ),
                         trailing: TextButton(
-                          onPressed: () async {
-                            final picked = await showDatePicker(
-                              context: context,
-                              initialDate: startDate ?? DateTime.now(),
-                              firstDate: DateTime(2020),
-                              lastDate: DateTime(2100),
-                            );
-                            if (picked == null) return;
-                            setState(() => _semesterStartDate = picked);
-                          },
+                          onPressed: _saving
+                              ? null
+                              : () async {
+                                  final loadGeneration = _loadGeneration;
+                                  final picked = await showDatePicker(
+                                    context: context,
+                                    initialDate: startDate ?? DateTime.now(),
+                                    firstDate: DateTime(2020),
+                                    lastDate: DateTime(2100),
+                                  );
+                                  if (!mounted ||
+                                      picked == null ||
+                                      loadGeneration != _loadGeneration) {
+                                    return;
+                                  }
+                                  setState(() => _semesterStartDate = picked);
+                                },
                           child: const Text('选择'),
                         ),
                       ),
@@ -130,8 +197,10 @@ class _ScheduleSettingsScreenState extends State<ScheduleSettingsScreen> {
                         Align(
                           alignment: Alignment.centerLeft,
                           child: TextButton(
-                            onPressed: () =>
-                                setState(() => _semesterStartDate = null),
+                            onPressed: _saving
+                                ? null
+                                : () =>
+                                      setState(() => _semesterStartDate = null),
                             child: const Text('清除开学日期'),
                           ),
                         ),
@@ -150,15 +219,18 @@ class _ScheduleSettingsScreenState extends State<ScheduleSettingsScreen> {
                                     child: Text('第$week周'),
                                   ),
                               ],
-                              onChanged: (value) {
-                                if (value == null) return;
-                                setState(() {
-                                  _semesterStartWeek = value;
-                                  if ((_semesterEndWeek ?? value) < value) {
-                                    _semesterEndWeek = value;
-                                  }
-                                });
-                              },
+                              onChanged: _saving
+                                  ? null
+                                  : (value) {
+                                      if (value == null) return;
+                                      setState(() {
+                                        _semesterStartWeek = value;
+                                        if ((_semesterEndWeek ?? value) <
+                                            value) {
+                                          _semesterEndWeek = value;
+                                        }
+                                      });
+                                    },
                             ),
                           ),
                           const SizedBox(width: 12),
@@ -175,10 +247,12 @@ class _ScheduleSettingsScreenState extends State<ScheduleSettingsScreen> {
                                     child: Text('第$week周'),
                                   ),
                               ],
-                              onChanged: (value) {
-                                if (value == null) return;
-                                setState(() => _semesterEndWeek = value);
-                              },
+                              onChanged: _saving
+                                  ? null
+                                  : (value) {
+                                      if (value == null) return;
+                                      setState(() => _semesterEndWeek = value);
+                                    },
                             ),
                           ),
                         ],
