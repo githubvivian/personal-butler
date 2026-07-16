@@ -1,52 +1,120 @@
 import 'package:speech_to_text/speech_to_text.dart';
 
-class SpeechService {
+typedef SpeechTextCallback = void Function(String text, bool isFinal);
+
+abstract interface class SpeechInput {
+  Future<bool> ensureReady();
+
+  Future<bool> hasPermission();
+
+  Future<void> startListening({
+    required Object sessionOwner,
+    required SpeechTextCallback onText,
+  });
+
+  Future<void> stopListening({required Object sessionOwner});
+}
+
+class SpeechService implements SpeechInput {
   SpeechService._();
   static final SpeechService instance = SpeechService._();
 
   final _speech = SpeechToText();
   bool _initialized = false;
+  Future<void> _operationQueue = Future.value();
+  Object? _latestRequestedOwner;
+  int _latestRequestedGeneration = 0;
 
+  @override
   Future<bool> ensureReady() async {
     if (_initialized) return true;
-    _initialized = await _speech.initialize(
-      onError: (_) {},
-      onStatus: (_) {},
-    );
+    _initialized = await _speech.initialize(onError: (_) {}, onStatus: (_) {});
     return _initialized;
   }
 
   bool get isListening => _speech.isListening;
 
+  @override
   Future<bool> hasPermission() async {
     await ensureReady();
     return _speech.hasPermission;
   }
 
+  @override
   Future<void> startListening({
-    required void Function(String text, bool isFinal) onText,
-  }) async {
-    if (!await ensureReady()) {
-      throw StateError('语音识别不可用');
+    required Object sessionOwner,
+    required SpeechTextCallback onText,
+  }) {
+    final generation = ++_latestRequestedGeneration;
+    _latestRequestedOwner = sessionOwner;
+    return _enqueue(() => _startListening(sessionOwner, generation, onText));
+  }
+
+  @override
+  Future<void> stopListening({required Object sessionOwner}) {
+    if (!identical(_latestRequestedOwner, sessionOwner)) {
+      return Future.value();
     }
-    if (_speech.isListening) await _speech.stop();
+
+    _latestRequestedOwner = null;
+    _latestRequestedGeneration++;
+    return _enqueue(_speech.stop);
+  }
+
+  Future<void> _startListening(
+    Object sessionOwner,
+    int generation,
+    SpeechTextCallback onText,
+  ) async {
+    if (!_isLatestRequest(sessionOwner, generation)) return;
+
+    final ready = await ensureReady();
+    if (!_isLatestRequest(sessionOwner, generation)) return;
+    if (!ready) throw StateError('语音识别不可用');
+
+    await _speech.stop();
+    if (!_isLatestRequest(sessionOwner, generation)) return;
 
     final locales = await _speech.locales();
+    if (!_isLatestRequest(sessionOwner, generation)) return;
     final zh = locales.where((l) => l.localeId.startsWith('zh')).toList();
     final localeId = zh.isNotEmpty ? zh.first.localeId : 'zh_CN';
 
-    await _speech.listen(
-      localeId: localeId,
-      listenMode: ListenMode.confirmation,
-      onResult: (result) => onText(result.recognizedWords, result.finalResult),
+    try {
+      await _speech.listen(
+        listenOptions: SpeechListenOptions(
+          localeId: localeId,
+          listenMode: ListenMode.confirmation,
+        ),
+        onResult: (result) =>
+            onText(result.recognizedWords, result.finalResult),
+      );
+    } catch (_) {
+      if (!_isLatestRequest(sessionOwner, generation)) {
+        await _speech.stop();
+      }
+      rethrow;
+    }
+
+    if (!_isLatestRequest(sessionOwner, generation)) {
+      await _speech.stop();
+    }
+  }
+
+  bool _isLatestRequest(Object sessionOwner, int generation) {
+    return identical(_latestRequestedOwner, sessionOwner) &&
+        _latestRequestedGeneration == generation;
+  }
+
+  Future<void> _enqueue(Future<void> Function() operation) {
+    final result = _operationQueue.then((_) => operation());
+    _operationQueue = result.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
     );
+    return result;
   }
 
-  Future<void> stopListening() async {
-    if (_speech.isListening) await _speech.stop();
-  }
-
-  void dispose() {
-    _speech.stop();
-  }
+  Future<void> dispose({required Object sessionOwner}) =>
+      stopListening(sessionOwner: sessionOwner);
 }
