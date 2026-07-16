@@ -135,6 +135,219 @@ void main() {
     ]);
   });
 
+  test(
+    'syncItem runs every independent action after an early failure',
+    () async {
+      final firstError = StateError('first cancel failed');
+      final events = <String>[];
+      final item = _pendingItem(
+        id: 'best-effort-item',
+        startAt: DateTime.now().add(const Duration(days: 1)),
+        nextFollowUpAt: DateTime.now().add(const Duration(days: 2)),
+      );
+      final service = ReminderSyncService(
+        cancelNotification: (id) async {
+          events.add('cancel:$id');
+          if (id == ReminderSyncService.itemId(item.id)) throw firstError;
+        },
+        scheduleItemReminder:
+            ({
+              required int id,
+              required String title,
+              required String body,
+              required DateTime when,
+            }) async {
+              events.add('item:$id');
+            },
+        scheduleWeakReminder:
+            ({
+              required int id,
+              required String title,
+              required String body,
+              required DateTime when,
+            }) async {
+              events.add('weak:$id');
+            },
+      );
+
+      await expectLater(service.syncItem(item), throwsA(same(firstError)));
+
+      expect(events, [
+        'cancel:${ReminderSyncService.itemId(item.id)}',
+        'cancel:${ReminderSyncService.pendingId(item.id)}',
+        'item:${ReminderSyncService.itemId(item.id)}',
+        'weak:${ReminderSyncService.pendingId(item.id)}',
+      ]);
+    },
+  );
+
+  test(
+    'syncBirthday runs later cancellations and schedules after failure',
+    () async {
+      final firstError = StateError('birthday cancel failed');
+      final events = <String>[];
+      final birthdayDate = DateTime.now().add(const Duration(days: 10));
+      final birthday = BirthdayModel(
+        id: 'best-effort-birthday',
+        name: 'Birthday',
+        isLunar: false,
+        month: birthdayDate.month,
+        day: birthdayDate.day,
+        remindDaysBefore: 1,
+        createdAt: DateTime.now(),
+      );
+      final service = ReminderSyncService(
+        cancelNotification: (id) async {
+          events.add('cancel:$id');
+          if (id == ReminderSyncService.birthdayAdvanceId(birthday.id)) {
+            throw firstError;
+          }
+        },
+        scheduleItemReminder:
+            ({
+              required int id,
+              required String title,
+              required String body,
+              required DateTime when,
+            }) async {
+              events.add('item:$id');
+            },
+        scheduleWeakReminder:
+            ({
+              required int id,
+              required String title,
+              required String body,
+              required DateTime when,
+            }) async {
+              events.add('weak:$id');
+            },
+      );
+
+      await expectLater(
+        service.syncBirthday(birthday),
+        throwsA(same(firstError)),
+      );
+
+      expect(events, [
+        'cancel:${ReminderSyncService.birthdayAdvanceId(birthday.id)}',
+        'cancel:${ReminderSyncService.birthdayDayId(birthday.id)}',
+        'weak:${ReminderSyncService.birthdayAdvanceId(birthday.id)}',
+        'item:${ReminderSyncService.birthdayDayId(birthday.id)}',
+      ]);
+    },
+  );
+
+  test(
+    'syncAll continues with later items and birthdays after one failure',
+    () async {
+      final firstError = StateError('first item failed');
+      final events = <String>[];
+      final firstItem = _pendingItem(
+        id: 'first-sync-all',
+        startAt: DateTime.now().add(const Duration(days: 1)),
+      );
+      final secondItem = _pendingItem(
+        id: 'second-sync-all',
+        startAt: DateTime.now().add(const Duration(days: 2)),
+      );
+      final birthdayDate = DateTime.now().add(const Duration(days: 10));
+      final birthday = BirthdayModel(
+        id: 'sync-all-birthday',
+        name: 'Birthday',
+        isLunar: false,
+        month: birthdayDate.month,
+        day: birthdayDate.day,
+        remindDaysBefore: 1,
+        createdAt: DateTime.now(),
+      );
+      final service = ReminderSyncService(
+        cancelNotification: (id) async {
+          events.add('cancel:$id');
+          if (id == ReminderSyncService.itemId(firstItem.id)) throw firstError;
+        },
+        scheduleItemReminder:
+            ({
+              required int id,
+              required String title,
+              required String body,
+              required DateTime when,
+            }) async {
+              events.add('item:$id');
+            },
+        scheduleWeakReminder:
+            ({
+              required int id,
+              required String title,
+              required String body,
+              required DateTime when,
+            }) async {
+              events.add('weak:$id');
+            },
+      );
+
+      await expectLater(
+        service.syncAll(
+          items: _ItemRepository([firstItem, secondItem]),
+          birthdays: _BirthdayRepository([birthday]),
+        ),
+        throwsA(same(firstError)),
+      );
+
+      expect(
+        events,
+        contains('cancel:${ReminderSyncService.itemId(secondItem.id)}'),
+      );
+      expect(
+        events,
+        contains('item:${ReminderSyncService.itemId(secondItem.id)}'),
+      );
+      expect(
+        events,
+        contains(
+          'cancel:${ReminderSyncService.birthdayAdvanceId(birthday.id)}',
+        ),
+      );
+      expect(
+        events,
+        contains('item:${ReminderSyncService.birthdayDayId(birthday.id)}'),
+      );
+    },
+  );
+
+  test(
+    'syncItem preserves the first error without exposing later errors',
+    () async {
+      final firstError = StateError('first error');
+      final laterError = StateError('later error details');
+      final item = _pendingItem(
+        id: 'first-error-item',
+        startAt: DateTime.now().add(const Duration(days: 1)),
+      );
+      final service = ReminderSyncService(
+        cancelNotification: (id) async {
+          if (id == ReminderSyncService.itemId(item.id)) throw firstError;
+          throw laterError;
+        },
+        scheduleItemReminder:
+            ({
+              required int id,
+              required String title,
+              required String body,
+              required DateTime when,
+            }) async {},
+        scheduleWeakReminder:
+            ({
+              required int id,
+              required String title,
+              required String body,
+              required DateTime when,
+            }) async {},
+      );
+
+      await expectLater(service.syncItem(item), throwsA(same(firstError)));
+    },
+  );
+
   test('syncAll silently reschedules without requesting permission', () async {
     final notificationMethods = <String>[];
     final messenger =

@@ -71,14 +71,11 @@ class ReminderSyncService {
     required BirthdayRepository birthdays,
   }) async {
     final allItems = await items.getAllActiveConfirmed();
-    for (final item in allItems) {
-      await syncItem(item);
-    }
-
     final allBirthdays = await birthdays.getAll();
-    for (final b in allBirthdays) {
-      await syncBirthday(b);
-    }
+    await _runBestEffort([
+      for (final item in allItems) () => syncItem(item),
+      for (final birthday in allBirthdays) () => syncBirthday(birthday),
+    ]);
   }
 
   Future<void> reconcileAll({
@@ -210,39 +207,53 @@ class ReminderSyncService {
   }
 
   Future<void> syncItem(ItemModel item) async {
-    await _cancelNotification(itemId(item.id));
-    await _cancelNotification(pendingId(item.id));
-
-    if (!itemHasActiveReminder(item)) return;
+    final actions = <Future<void> Function()>[
+      () => _cancelNotification(itemId(item.id)),
+      () => _cancelNotification(pendingId(item.id)),
+    ];
+    if (!itemHasActiveReminder(item)) {
+      await _runBestEffort(actions);
+      return;
+    }
 
     if (item.startAt != null) {
       final when = item.startAt!.subtract(
         Duration(minutes: item.reminderMinutes),
       );
-      await _scheduleItemReminder(
-        id: itemId(item.id),
-        title: item.title,
-        body: item.location ?? '日程提醒',
-        when: when,
+      actions.add(
+        () => _scheduleItemReminder(
+          id: itemId(item.id),
+          title: item.title,
+          body: item.location ?? '日程提醒',
+          when: when,
+        ),
       );
     }
 
     if (item.isPendingType &&
         item.status != 'done' &&
         item.nextFollowUpAt != null) {
-      await _scheduleWeakReminder(
-        id: pendingId(item.id),
-        title: '关注：${item.title}',
-        body: '悬而未决事项到了关注时间，点击查看进展',
-        when: item.nextFollowUpAt!,
+      actions.add(
+        () => _scheduleWeakReminder(
+          id: pendingId(item.id),
+          title: '关注：${item.title}',
+          body: '悬而未决事项到了关注时间，点击查看进展',
+          when: item.nextFollowUpAt!,
+        ),
       );
     }
+    await _runBestEffort(actions);
   }
 
   Future<void> syncBirthday(BirthdayModel b) async {
-    await _cancelNotification(birthdayAdvanceId(b.id));
-    await _cancelNotification(birthdayDayId(b.id));
-    if (b.isDeleted) return;
+    final actions = <Future<void> Function()>[
+      () => _cancelNotification(birthdayAdvanceId(b.id)),
+      () => _cancelNotification(birthdayDayId(b.id)),
+    ];
+    if (b.isDeleted) {
+      await _runBestEffort(actions);
+      return;
+    }
 
     final next = LunarDateHelper.nextSolarOccurrence(
       isLunar: b.isLunar,
@@ -250,27 +261,53 @@ class ReminderSyncService {
       day: b.day,
       isLeapMonth: b.isLeapMonth,
     );
-    if (next == null) return;
+    if (next == null) {
+      await _runBestEffort(actions);
+      return;
+    }
 
     final remindAt = DateTime(next.year, next.month, next.day, 9);
     final advance = remindAt.subtract(Duration(days: b.remindDaysBefore));
 
     if (advance.isAfter(DateTime.now())) {
-      await _scheduleWeakReminder(
-        id: birthdayAdvanceId(b.id),
-        title: '生日临近',
-        body: '${b.name} 的生日还有 ${b.remindDaysBefore} 天',
-        when: advance,
+      actions.add(
+        () => _scheduleWeakReminder(
+          id: birthdayAdvanceId(b.id),
+          title: '生日临近',
+          body: '${b.name} 的生日还有 ${b.remindDaysBefore} 天',
+          when: advance,
+        ),
       );
     }
     if (remindAt.isAfter(DateTime.now())) {
-      await _scheduleItemReminder(
-        id: birthdayDayId(b.id),
-        title: '生日快乐',
-        body: '今天是 ${b.name} 的生日',
-        when: remindAt,
+      actions.add(
+        () => _scheduleItemReminder(
+          id: birthdayDayId(b.id),
+          title: '生日快乐',
+          body: '今天是 ${b.name} 的生日',
+          when: remindAt,
+        ),
       );
     }
+    await _runBestEffort(actions);
+  }
+}
+
+/// Runs independent notification operations to completion and rethrows the
+/// first error with its original stack trace after every operation has run.
+Future<void> _runBestEffort(Iterable<Future<void> Function()> actions) async {
+  Object? firstError;
+  StackTrace? firstStackTrace;
+  for (final action in actions) {
+    try {
+      await action();
+    } catch (error, stackTrace) {
+      firstError ??= error;
+      firstStackTrace ??= stackTrace;
+    }
+  }
+  if (firstError != null) {
+    Error.throwWithStackTrace(firstError, firstStackTrace!);
   }
 }
 
