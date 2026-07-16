@@ -75,7 +75,8 @@ class _PendingScreenState extends State<PendingScreen>
   late TabController _tab;
   late ItemRepository _repository;
   List<ItemModel> _items = [];
-  bool _loading = true;
+  DataLoadStatus _loadStatus = DataLoadStatus.loading;
+  bool _hasSnapshot = false;
   int _loadGeneration = 0;
 
   @override
@@ -84,7 +85,7 @@ class _PendingScreenState extends State<PendingScreen>
     _tab = TabController(length: 4, vsync: this);
     _repository = _resolveRepository();
     _repository.addListener(_handleItemMutation);
-    _load();
+    _load(resetSnapshot: true);
   }
 
   @override
@@ -112,25 +113,35 @@ class _PendingScreenState extends State<PendingScreen>
     _repository.removeListener(_handleItemMutation);
     _repository = repository;
     _repository.addListener(_handleItemMutation);
-    _load();
+    _load(resetSnapshot: true);
   }
 
   void _handleItemMutation() => _load();
 
-  Future<void> _load() async {
+  Future<void> _load({bool resetSnapshot = false}) async {
     final generation = ++_loadGeneration;
     final includeDone = _tab.index == 3;
-    if (mounted) setState(() => _loading = true);
+    final repository = _repository;
+    if (mounted) {
+      setState(() {
+        if (resetSnapshot) {
+          _items = [];
+          _hasSnapshot = false;
+        }
+        _loadStatus = DataLoadStatus.loading;
+      });
+    }
     try {
-      final items = await _repository.getPendingItems(includeDone: includeDone);
+      final items = await repository.getPendingItems(includeDone: includeDone);
       if (!mounted || generation != _loadGeneration) return;
       setState(() {
         _items = items;
-        _loading = false;
+        _hasSnapshot = true;
+        _loadStatus = DataLoadStatus.ready;
       });
     } catch (_) {
       if (!mounted || generation != _loadGeneration) return;
-      setState(() => _loading = false);
+      setState(() => _loadStatus = DataLoadStatus.failed);
     }
   }
 
@@ -208,7 +219,7 @@ class _PendingScreenState extends State<PendingScreen>
         bottom: TabBar(
           controller: _tab,
           isScrollable: true,
-          onTap: (_) => _load(),
+          onTap: (_) => _load(resetSnapshot: true),
           tabs: const [
             Tab(text: '全部'),
             Tab(text: '待我处理'),
@@ -217,35 +228,57 @@ class _PendingScreenState extends State<PendingScreen>
           ],
         ),
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
-              onRefresh: _load,
-              child: _filtered.isEmpty
-                  ? ListView(
-                      children: const [
-                        SizedBox(height: 80),
-                        Center(child: Text('暂无悬而未决事项')),
-                      ],
-                    )
-                  : ListView.builder(
-                      padding: const EdgeInsets.all(16),
-                      itemCount: _filtered.length,
-                      itemBuilder: (context, i) {
-                        final item = _filtered[i];
-                        final itemBuilder = widget.itemBuilder;
-                        if (itemBuilder != null) {
-                          return itemBuilder(
-                            context,
-                            item,
-                            () => _postpone(item),
-                            () => _updateStatus(item),
-                          );
-                        }
-                        return _card(item);
-                      },
-                    ),
-            ),
+      body: RefreshIndicator(onRefresh: () => _load(), child: _buildBody()),
+    );
+  }
+
+  Widget _buildBody() {
+    if (!_hasSnapshot) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(16),
+        children: [
+          const SizedBox(height: 80),
+          if (_loadStatus == DataLoadStatus.loading)
+            const Center(child: CircularProgressIndicator())
+          else
+            DataLoadFailure(onRetry: () => _load()),
+        ],
+      );
+    }
+
+    final items = _filtered;
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.all(16),
+      children: [
+        if (_loadStatus == DataLoadStatus.loading) ...[
+          const LinearProgressIndicator(),
+          const SizedBox(height: 12),
+        ],
+        if (_loadStatus == DataLoadStatus.failed) ...[
+          DataLoadFailure(onRetry: () => _load()),
+          const SizedBox(height: 12),
+        ],
+        if (items.isEmpty)
+          const Padding(
+            padding: EdgeInsets.only(top: 68),
+            child: Center(child: Text('暂无悬而未决事项')),
+          )
+        else
+          ...items.map((item) {
+            final itemBuilder = widget.itemBuilder;
+            if (itemBuilder != null) {
+              return itemBuilder(
+                context,
+                item,
+                () => _postpone(item),
+                () => _updateStatus(item),
+              );
+            }
+            return _card(item);
+          }),
+      ],
     );
   }
 

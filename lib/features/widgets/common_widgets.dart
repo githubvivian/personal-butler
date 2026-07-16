@@ -1,6 +1,26 @@
 import 'package:flutter/material.dart';
 import '../../core/constants/app_constants.dart';
 
+enum DataLoadStatus { loading, ready, failed }
+
+class DataLoadFailure extends StatelessWidget {
+  const DataLoadFailure({super.key, required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Row(
+        children: [
+          const Expanded(child: Text('数据加载失败，请重试')),
+          TextButton(onPressed: onRetry, child: const Text('重试')),
+        ],
+      ),
+    );
+  }
+}
+
 class AppCard extends StatelessWidget {
   final Widget child;
   final EdgeInsetsGeometry? padding;

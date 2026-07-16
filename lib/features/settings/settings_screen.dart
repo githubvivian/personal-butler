@@ -36,6 +36,8 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   Map<String, int> _stats = {};
   String _scheduleSummary = '';
+  DataLoadStatus _loadStatus = DataLoadStatus.loading;
+  bool _hasSnapshot = false;
   Future<void>? _exactAlarmPermissionRequest;
   late AppState _appState;
   late ItemRepository _itemRepository;
@@ -51,7 +53,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _observedDataRevision = _appState.dataRevision;
     _appState.addListener(_handleExternalDataRefresh);
     _itemRepository.addListener(_handleItemMutation);
-    _load();
+    _load(resetSnapshot: true);
   }
 
   @override
@@ -69,12 +71,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final revision = _appState.dataRevision;
     if (revision == _observedDataRevision) return;
     _observedDataRevision = revision;
-    _load();
+    _load(resetSnapshot: true);
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool resetSnapshot = false}) async {
     final generation = ++_loadGeneration;
     final statsGeneration = ++_statsGeneration;
+    if (mounted) {
+      setState(() {
+        if (resetSnapshot) {
+          _stats = {};
+          _scheduleSummary = '';
+          _hasSnapshot = false;
+        }
+        _loadStatus = DataLoadStatus.loading;
+      });
+    }
     try {
       final stats = Map<String, int>.from(
         await _itemRepository.getTodayStats(),
@@ -90,7 +102,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _stats = stats;
         } else {
           _stats = {
-            ..._stats,
+            ...stats,
+            'today': _stats['today'] ?? stats['today'] ?? 0,
+            'pending': _stats['pending'] ?? stats['pending'] ?? 0,
             'ideas': ideas.length,
             'birthdays': birthdays.length,
           };
@@ -98,21 +112,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _scheduleSummary =
             '第${scheduleSettings.semesterStartWeek}-${scheduleSettings.semesterEndWeek}周'
             '${scheduleSettings.semesterStartDate == null ? '' : ' · 已设开学日期'}';
+        _hasSnapshot = true;
+        _loadStatus = DataLoadStatus.ready;
       });
-    } catch (_) {}
+    } catch (_) {
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() => _loadStatus = DataLoadStatus.failed);
+    }
   }
 
   Future<void> _loadItemStats() async {
     final generation = ++_statsGeneration;
+    if (mounted && _hasSnapshot) {
+      setState(() => _loadStatus = DataLoadStatus.loading);
+    }
     try {
       final stats = Map<String, int>.from(
         await _itemRepository.getTodayStats(),
       );
       if (!mounted || generation != _statsGeneration) return;
+      if (!_hasSnapshot) return;
       stats['ideas'] = _stats['ideas'] ?? 0;
       stats['birthdays'] = _stats['birthdays'] ?? 0;
-      setState(() => _stats = stats);
-    } catch (_) {}
+      setState(() {
+        _stats = stats;
+        _loadStatus = DataLoadStatus.ready;
+      });
+    } catch (_) {
+      if (!mounted || generation != _statsGeneration || !_hasSnapshot) return;
+      setState(() => _loadStatus = DataLoadStatus.failed);
+    }
   }
 
   @override
@@ -122,6 +151,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: RefreshIndicator(
         onRefresh: _load,
         child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(16),
           children: [
             AppCard(
@@ -159,14 +189,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ),
             const SizedBox(height: 16),
-            Row(
-              children: [
-                _miniStat('今日', '${_stats['today'] ?? 0}'),
-                _miniStat('悬停', '${_stats['pending'] ?? 0}'),
-                _miniStat('灵感', '${_stats['ideas'] ?? 0}'),
-                _miniStat('生日', '${_stats['birthdays'] ?? 0}'),
-              ],
-            ),
+            ..._buildStats(),
             const SizedBox(height: 20),
             _menuTile(
               Icons.lock_outline,
@@ -201,7 +224,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 if (!mounted) return;
                 _load();
               },
-              subtitle: _scheduleSummary.isEmpty ? '设置学期周范围' : _scheduleSummary,
+              subtitle: !_hasSnapshot || _scheduleSummary.isEmpty
+                  ? '设置学期周范围'
+                  : _scheduleSummary,
             ),
             _menuTile(
               Icons.notifications_outlined,
@@ -225,6 +250,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ),
     );
+  }
+
+  List<Widget> _buildStats() {
+    if (!_hasSnapshot) {
+      return [
+        if (_loadStatus == DataLoadStatus.loading)
+          const Center(child: CircularProgressIndicator())
+        else
+          DataLoadFailure(onRetry: () => _load(resetSnapshot: true)),
+      ];
+    }
+
+    return [
+      if (_loadStatus == DataLoadStatus.loading) ...[
+        const LinearProgressIndicator(),
+        const SizedBox(height: 12),
+      ],
+      if (_loadStatus == DataLoadStatus.failed) ...[
+        DataLoadFailure(onRetry: () => _load()),
+        const SizedBox(height: 12),
+      ],
+      Row(
+        children: [
+          _miniStat('今日', '${_stats['today'] ?? 0}'),
+          _miniStat('悬停', '${_stats['pending'] ?? 0}'),
+          _miniStat('灵感', '${_stats['ideas'] ?? 0}'),
+          _miniStat('生日', '${_stats['birthdays'] ?? 0}'),
+        ],
+      ),
+    ];
   }
 
   Future<void> _lock() async {

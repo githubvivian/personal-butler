@@ -34,7 +34,8 @@ class _InboxScreenState extends State<InboxScreen> {
 
   List<ItemModel> _items = [];
   Map<String, int> _stats = {};
-  bool _loading = true;
+  DataLoadStatus _loadStatus = DataLoadStatus.loading;
+  bool _hasSnapshot = false;
   bool _ocrInFlight = false;
   late ItemRepository _repository;
   int _loadGeneration = 0;
@@ -44,7 +45,7 @@ class _InboxScreenState extends State<InboxScreen> {
     super.initState();
     _repository = _resolveRepository();
     _repository.addListener(_handleItemMutation);
-    _load();
+    _load(resetSnapshot: true);
   }
 
   @override
@@ -71,15 +72,24 @@ class _InboxScreenState extends State<InboxScreen> {
     _repository.removeListener(_handleItemMutation);
     _repository = repository;
     _repository.addListener(_handleItemMutation);
-    _load();
+    _load(resetSnapshot: true);
   }
 
   void _handleItemMutation() => _load();
 
-  Future<void> _load() async {
+  Future<void> _load({bool resetSnapshot = false}) async {
     final generation = ++_loadGeneration;
     final repository = _repository;
-    if (mounted) setState(() => _loading = true);
+    if (mounted) {
+      setState(() {
+        if (resetSnapshot) {
+          _items = [];
+          _stats = {};
+          _hasSnapshot = false;
+        }
+        _loadStatus = DataLoadStatus.loading;
+      });
+    }
     try {
       final items = await repository.getInboxItems();
       final stats = await repository.getTodayStats();
@@ -87,11 +97,12 @@ class _InboxScreenState extends State<InboxScreen> {
       setState(() {
         _items = items;
         _stats = stats;
-        _loading = false;
+        _hasSnapshot = true;
+        _loadStatus = DataLoadStatus.ready;
       });
     } catch (_) {
       if (!mounted || generation != _loadGeneration) return;
-      setState(() => _loading = false);
+      setState(() => _loadStatus = DataLoadStatus.failed);
     }
   }
 
@@ -214,25 +225,47 @@ class _InboxScreenState extends State<InboxScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('收件箱')),
-      body: RefreshIndicator(
-        onRefresh: _load,
-        child: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
-                  _buildSummary(),
-                  const SizedBox(height: 16),
-                  _buildQuickActions(),
-                  const SizedBox(height: 20),
-                  const SectionHeader(title: '待处理'),
-                  if (_items.isEmpty)
-                    const AppCard(child: Text('暂无待处理事项，可通过下方快捷入口添加'))
-                  else
-                    ..._items.map(_buildItemCard),
-                ],
-              ),
-      ),
+      body: RefreshIndicator(onRefresh: () => _load(), child: _buildBody()),
+    );
+  }
+
+  Widget _buildBody() {
+    if (!_hasSnapshot) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(16),
+        children: [
+          const SizedBox(height: 120),
+          if (_loadStatus == DataLoadStatus.loading)
+            const Center(child: CircularProgressIndicator())
+          else
+            DataLoadFailure(onRetry: () => _load()),
+        ],
+      );
+    }
+
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.all(16),
+      children: [
+        if (_loadStatus == DataLoadStatus.loading) ...[
+          const LinearProgressIndicator(),
+          const SizedBox(height: 12),
+        ],
+        if (_loadStatus == DataLoadStatus.failed) ...[
+          DataLoadFailure(onRetry: () => _load()),
+          const SizedBox(height: 12),
+        ],
+        _buildSummary(),
+        const SizedBox(height: 16),
+        _buildQuickActions(),
+        const SizedBox(height: 20),
+        const SectionHeader(title: '待处理'),
+        if (_items.isEmpty)
+          const AppCard(child: Text('暂无待处理事项，可通过下方快捷入口添加'))
+        else
+          ..._items.map(_buildItemCard),
+      ],
     );
   }
 

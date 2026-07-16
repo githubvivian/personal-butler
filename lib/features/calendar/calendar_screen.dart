@@ -21,6 +21,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
   DateTime _focused = DateTime.now();
   DateTime _selected = DateTime.now();
   List<ItemModel> _dayItems = [];
+  DataLoadStatus _loadStatus = DataLoadStatus.loading;
+  bool _hasSnapshot = false;
   late ItemRepository _repository;
   int _loadGeneration = 0;
 
@@ -29,7 +31,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
     super.initState();
     _repository = context.read<AppState>().items;
     _repository.addListener(_handleItemMutation);
-    _load();
+    _load(resetSnapshot: true);
   }
 
   @override
@@ -41,14 +43,31 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   void _handleItemMutation() => _load();
 
-  Future<void> _load() async {
+  Future<void> _load({bool resetSnapshot = false}) async {
     final generation = ++_loadGeneration;
     final selected = _selected;
+    final repository = _repository;
+    if (mounted) {
+      setState(() {
+        if (resetSnapshot) {
+          _dayItems = [];
+          _hasSnapshot = false;
+        }
+        _loadStatus = DataLoadStatus.loading;
+      });
+    }
     try {
-      final items = await _repository.getCalendarItems(selected);
+      final items = await repository.getCalendarItems(selected);
       if (!mounted || generation != _loadGeneration) return;
-      setState(() => _dayItems = items);
-    } catch (_) {}
+      setState(() {
+        _dayItems = items;
+        _hasSnapshot = true;
+        _loadStatus = DataLoadStatus.ready;
+      });
+    } catch (_) {
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() => _loadStatus = DataLoadStatus.failed);
+    }
   }
 
   @override
@@ -87,7 +106,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                 _selected = s;
                 _focused = f;
               });
-              _load();
+              _load(resetSnapshot: true);
             },
             headerStyle: const HeaderStyle(formatButtonVisible: false),
             calendarStyle: const CalendarStyle(
@@ -116,23 +135,48 @@ class _CalendarScreenState extends State<CalendarScreen> {
           ),
           Expanded(
             child: RefreshIndicator(
-              onRefresh: _load,
-              child: _dayItems.isEmpty
-                  ? ListView(
-                      children: const [
-                        SizedBox(height: 80),
-                        Center(child: Text('今天暂无日程')),
-                      ],
-                    )
-                  : ListView.builder(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      itemCount: _dayItems.length,
-                      itemBuilder: (_, i) => _timelineTile(_dayItems[i]),
-                    ),
+              onRefresh: () => _load(),
+              child: _buildDayItems(),
             ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildDayItems() {
+    if (!_hasSnapshot) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        children: [
+          const SizedBox(height: 80),
+          if (_loadStatus == DataLoadStatus.loading)
+            const Center(child: CircularProgressIndicator())
+          else
+            DataLoadFailure(onRetry: () => _load()),
+        ],
+      );
+    }
+
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      children: [
+        if (_loadStatus == DataLoadStatus.loading) ...[
+          const LinearProgressIndicator(),
+          const SizedBox(height: 12),
+        ],
+        if (_loadStatus == DataLoadStatus.failed) ...[
+          DataLoadFailure(onRetry: () => _load()),
+          const SizedBox(height: 12),
+        ],
+        if (_dayItems.isEmpty) ...[
+          const SizedBox(height: 80),
+          const Center(child: Text('今天暂无日程')),
+        ] else
+          ..._dayItems.map(_timelineTile),
+      ],
     );
   }
 

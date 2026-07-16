@@ -23,6 +23,8 @@ class _FamilyScreenState extends State<FamilyScreen> {
   };
   DateTime _day = DateTime.now();
   List<ItemModel> _events = [];
+  DataLoadStatus _loadStatus = DataLoadStatus.loading;
+  bool _hasSnapshot = false;
   late ItemRepository _repository;
   int _loadGeneration = 0;
 
@@ -31,7 +33,7 @@ class _FamilyScreenState extends State<FamilyScreen> {
     super.initState();
     _repository = context.read<AppState>().items;
     _repository.addListener(_handleItemMutation);
-    _load();
+    _load(resetSnapshot: true);
   }
 
   @override
@@ -43,18 +45,35 @@ class _FamilyScreenState extends State<FamilyScreen> {
 
   void _handleItemMutation() => _load();
 
-  Future<void> _load() async {
+  Future<void> _load({bool resetSnapshot = false}) async {
     final generation = ++_loadGeneration;
     final owners = _selected.toList();
     final day = _day;
+    final repository = _repository;
     if (_selected.contains(AppConstants.ownerSelf)) {
       // self handled separately if needed
     }
+    if (mounted) {
+      setState(() {
+        if (resetSnapshot) {
+          _events = [];
+          _hasSnapshot = false;
+        }
+        _loadStatus = DataLoadStatus.loading;
+      });
+    }
     try {
-      final events = await _repository.getFamilyItems(day, owners);
+      final events = await repository.getFamilyItems(day, owners);
       if (!mounted || generation != _loadGeneration) return;
-      setState(() => _events = events);
-    } catch (_) {}
+      setState(() {
+        _events = events;
+        _hasSnapshot = true;
+        _loadStatus = DataLoadStatus.ready;
+      });
+    } catch (_) {
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() => _loadStatus = DataLoadStatus.failed);
+    }
   }
 
   @override
@@ -71,8 +90,9 @@ class _FamilyScreenState extends State<FamilyScreen> {
         ],
       ),
       body: RefreshIndicator(
-        onRefresh: _load,
+        onRefresh: () => _load(),
         child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(16),
           children: [
             Wrap(
@@ -94,7 +114,7 @@ class _FamilyScreenState extends State<FamilyScreen> {
                 IconButton(
                   onPressed: () {
                     _day = _day.subtract(const Duration(days: 1));
-                    _load();
+                    _load(resetSnapshot: true);
                   },
                   icon: const Icon(Icons.chevron_left),
                 ),
@@ -111,23 +131,21 @@ class _FamilyScreenState extends State<FamilyScreen> {
                 TextButton(
                   onPressed: () {
                     _day = DateTime.now();
-                    _load();
+                    _load(resetSnapshot: true);
                   },
                   child: const Text('今天'),
                 ),
                 IconButton(
                   onPressed: () {
                     _day = _day.add(const Duration(days: 1));
-                    _load();
+                    _load(resetSnapshot: true);
                   },
                   icon: const Icon(Icons.chevron_right),
                 ),
               ],
             ),
             const SizedBox(height: 8),
-            ..._events.map(_eventCard),
-            if (_events.isEmpty)
-              const AppCard(child: Text('今日暂无家庭安排，可在创建事项时选择归属为贝贝或核桃')),
+            ..._buildEvents(),
             const SizedBox(height: 16),
             Row(
               children: [
@@ -168,9 +186,35 @@ class _FamilyScreenState extends State<FamilyScreen> {
             ..clear()
             ..addAll(ids);
         });
-        _load();
+        _load(resetSnapshot: true);
       },
     );
+  }
+
+  List<Widget> _buildEvents() {
+    if (!_hasSnapshot) {
+      return [
+        const SizedBox(height: 48),
+        if (_loadStatus == DataLoadStatus.loading)
+          const Center(child: CircularProgressIndicator())
+        else
+          DataLoadFailure(onRetry: () => _load()),
+      ];
+    }
+
+    return [
+      if (_loadStatus == DataLoadStatus.loading) ...[
+        const LinearProgressIndicator(),
+        const SizedBox(height: 12),
+      ],
+      if (_loadStatus == DataLoadStatus.failed) ...[
+        DataLoadFailure(onRetry: () => _load()),
+        const SizedBox(height: 12),
+      ],
+      ..._events.map(_eventCard),
+      if (_events.isEmpty)
+        const AppCard(child: Text('今日暂无家庭安排，可在创建事项时选择归属为贝贝或核桃')),
+    ];
   }
 
   Widget _eventCard(ItemModel item) {
