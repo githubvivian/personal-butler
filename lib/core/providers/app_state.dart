@@ -31,6 +31,7 @@ class AppState extends ChangeNotifier {
   bool _loading = true;
   Object? _bootstrapError;
   Future<void>? _bootstrapFuture;
+  int _dataRevision = 0;
 
   AppState({
     BootstrapAction? initializeNotifications,
@@ -51,6 +52,7 @@ class AppState extends ChangeNotifier {
   bool get initialized => _initialized;
   bool get loading => _loading;
   Object? get bootstrapError => _bootstrapError;
+  int get dataRevision => _dataRevision;
 
   Future<void> bootstrap() {
     final inFlight = _bootstrapFuture;
@@ -148,5 +150,10 @@ class AppState extends ChangeNotifier {
     await _lockSession();
   }
 
-  void refresh() => notifyListeners();
+  /// Notifies consumers that persistent data was replaced outside the normal
+  /// repositories, for example after a successful full backup restore.
+  void refresh() {
+    _dataRevision += 1;
+    notifyListeners();
+  }
 }

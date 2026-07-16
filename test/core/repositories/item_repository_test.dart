@@ -45,6 +45,8 @@ void main() {
       const ocrText = 'Quarterly planning\nTuesday at 10:00';
       const assetId = 'asset-123';
       const displayName = 'meeting.png';
+      var changes = 0;
+      repository.addListener(() => changes += 1);
 
       final item = await repository.createOcrDraftWithAttachment(
         ocrText: ocrText,
@@ -85,6 +87,7 @@ void main() {
       expect(attachment.createdAt, item.createdAt);
       expect(repository.createDraftCalled, isFalse);
       expect(repository.addAttachmentCalled, isFalse);
+      expect(changes, 1);
     });
 
     test('preserves a custom title and owner', () async {
@@ -105,6 +108,8 @@ void main() {
     });
 
     test('rolls back the item when attachment insertion fails', () async {
+      var changes = 0;
+      repository.addListener(() => changes += 1);
       await database.execute('''
         CREATE TRIGGER reject_attachment
         BEFORE INSERT ON attachments
@@ -124,6 +129,7 @@ void main() {
       expect(await database.query('attachments'), isEmpty);
       expect(repository.createDraftCalled, isFalse);
       expect(repository.addAttachmentCalled, isFalse);
+      expect(changes, 0);
     });
 
     test('rejects blank OCR text without writing sensitive values', () async {
@@ -182,6 +188,40 @@ void main() {
   });
 
   group('ItemRepository reminder side effects', () {
+    test('createDraft publishes exactly one committed mutation', () async {
+      final draftRepository = ItemRepository(
+        databaseProvider: () async => database,
+        syncItemReminder: (_) async {},
+        cancelNotification: (_) async {},
+      );
+      var changes = 0;
+      draftRepository.addListener(() => changes += 1);
+
+      await draftRepository.createDraft(type: 'meeting');
+
+      expect(changes, 1);
+      expect(await database.query('items'), hasLength(1));
+    });
+
+    test('deleting an absent item does not publish a mutation', () async {
+      var changes = 0;
+      repository.addListener(() => changes += 1);
+
+      await repository.softDelete('missing-soft-delete');
+      await repository.hardDelete('missing-hard-delete');
+
+      expect(changes, 0);
+    });
+
+    test('external invalidation publishes one explicit mutation', () {
+      var changes = 0;
+      repository.addListener(() => changes += 1);
+
+      repository.invalidateAfterExternalWrite();
+
+      expect(changes, 1);
+    });
+
     test('save commits the complete row when reminder sync throws', () async {
       var syncCount = 0;
       final item = _buildItem('item-save-sync-failure');
@@ -193,6 +233,8 @@ void main() {
         },
         cancelNotification: (_) async {},
       );
+      var changes = 0;
+      saveRepository.addListener(() => changes += 1);
 
       await saveRepository.save(item);
 
@@ -204,6 +246,7 @@ void main() {
       );
       expect(rows, hasLength(1));
       expect(rows.single, item.toMap());
+      expect(changes, 1);
     });
 
     test('save rethrows database failures without syncing reminders', () async {
@@ -216,6 +259,8 @@ void main() {
         },
         cancelNotification: (_) async {},
       );
+      var changes = 0;
+      saveRepository.addListener(() => changes += 1);
       await database.execute('''
         CREATE TRIGGER reject_item_insert
         BEFORE INSERT ON items
@@ -231,6 +276,7 @@ void main() {
 
       expect(syncCount, 0);
       expect(await database.query('items'), isEmpty);
+      expect(changes, 0);
     });
 
     test(
@@ -248,6 +294,8 @@ void main() {
             throw StateError('forced cancellation failure');
           },
         );
+        var changes = 0;
+        deleteRepository.addListener(() => changes += 1);
 
         await deleteRepository.softDelete(itemId);
 
@@ -261,6 +309,7 @@ void main() {
           ReminderSyncService.itemId(itemId),
           ReminderSyncService.pendingId(itemId),
         ]);
+        expect(changes, 1);
       },
     );
 
@@ -278,6 +327,8 @@ void main() {
             cancelledIds.add(notificationId);
           },
         );
+        var changes = 0;
+        deleteRepository.addListener(() => changes += 1);
         await database.execute('''
           CREATE TRIGGER reject_item_soft_delete
           BEFORE UPDATE OF is_deleted ON items
@@ -298,6 +349,7 @@ void main() {
         );
         expect(rows.single['is_deleted'], 0);
         expect(cancelledIds, isEmpty);
+        expect(changes, 0);
       },
     );
 
@@ -323,6 +375,8 @@ void main() {
             throw StateError('forced cancellation failure');
           },
         );
+        var changes = 0;
+        deleteRepository.addListener(() => changes += 1);
 
         await deleteRepository.hardDelete(itemId);
 
@@ -332,6 +386,7 @@ void main() {
           ReminderSyncService.itemId(itemId),
           ReminderSyncService.pendingId(itemId),
         ]);
+        expect(changes, 1);
       },
     );
 
@@ -356,6 +411,8 @@ void main() {
             cancelledIds.add(notificationId);
           },
         );
+        var changes = 0;
+        deleteRepository.addListener(() => changes += 1);
         await database.execute('''
           CREATE TRIGGER reject_item_hard_delete
           BEFORE DELETE ON items
@@ -382,6 +439,7 @@ void main() {
           hasLength(1),
         );
         expect(cancelledIds, isEmpty);
+        expect(changes, 0);
       },
     );
   });

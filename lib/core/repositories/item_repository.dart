@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 import 'package:uuid/uuid.dart';
 import '../database/database_helper.dart';
@@ -5,7 +6,7 @@ import '../models/models.dart';
 import '../services/notification_service.dart';
 import '../services/reminder_sync_service.dart';
 
-class ItemRepository {
+class ItemRepository extends ChangeNotifier {
   ItemRepository({
     Future<Database> Function()? databaseProvider,
     Future<void> Function(ItemModel)? syncItemReminder,
@@ -121,6 +122,7 @@ class ItemRepository {
       item.toMap(),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
+    notifyListeners();
     try {
       await _syncItemReminder(item);
     } catch (_) {}
@@ -192,28 +194,31 @@ class ItemRepository {
       await txn.insert('items', item.toMap());
       await txn.insert('attachments', attachment.toMap());
     });
+    notifyListeners();
 
     return item;
   }
 
   Future<void> softDelete(String id) async {
     final db = await _databaseProvider();
-    await db.update(
+    final changed = await db.update(
       'items',
       {'is_deleted': 1, 'updated_at': DateTime.now().toIso8601String()},
       where: 'id = ?',
       whereArgs: [id],
     );
+    if (changed > 0) notifyListeners();
     await _cancelBestEffort(ReminderSyncService.itemId(id));
     await _cancelBestEffort(ReminderSyncService.pendingId(id));
   }
 
   Future<void> hardDelete(String id) async {
     final db = await _databaseProvider();
-    await db.transaction((txn) async {
+    final changed = await db.transaction((txn) async {
       await txn.delete('attachments', where: 'item_id = ?', whereArgs: [id]);
-      await txn.delete('items', where: 'id = ?', whereArgs: [id]);
+      return txn.delete('items', where: 'id = ?', whereArgs: [id]);
     });
+    if (changed > 0) notifyListeners();
     await _cancelBestEffort(ReminderSyncService.itemId(id));
     await _cancelBestEffort(ReminderSyncService.pendingId(id));
   }
@@ -248,6 +253,10 @@ class ItemRepository {
       'created_at': DateTime.now().toIso8601String(),
     });
   }
+
+  /// Signals that data was committed outside this repository, such as after
+  /// replacing the database from a validated backup.
+  void invalidateAfterExternalWrite() => notifyListeners();
 
   Future<Map<String, int>> getTodayStats() async {
     final db = await _databaseProvider();

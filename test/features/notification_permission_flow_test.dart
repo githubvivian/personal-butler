@@ -381,6 +381,7 @@ class _SpyItemRepository extends ItemRepository {
   Future<void> save(ItemModel item) async {
     saved.add(item);
     await onSave?.call(item);
+    notifyListeners();
   }
 
   @override

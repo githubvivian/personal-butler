@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:personal_butler/core/providers/app_state.dart';
+import 'package:personal_butler/core/repositories/item_repository.dart';
 import 'package:personal_butler/core/services/backup_service.dart';
 import 'package:personal_butler/features/settings/backup_screen.dart';
 import 'package:provider/provider.dart';
@@ -82,6 +83,68 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('successful restore invalidates retained item screens once', (
+    tester,
+  ) async {
+    final appState = _TrackingAppState();
+    var itemInvalidations = 0;
+    appState.items.addListener(() => itemInvalidations += 1);
+    final backupService = _ControlledImportBackupService();
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<AppState>.value(
+        value: appState,
+        child: MaterialApp(home: BackupScreen(backupService: backupService)),
+      ),
+    );
+    await tester.enterText(find.byType(TextField), 'secret1');
+    await tester.tap(find.text('从备份恢复'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('继续'));
+    await tester.pumpAndSettle();
+
+    expect(backupService.imports, 1);
+    expect(itemInvalidations, 1);
+    expect(appState.refreshCount, 1);
+    expect(find.text('恢复成功'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'committed restore invalidates data after the backup screen is disposed',
+    (tester) async {
+      final appState = _TrackingAppState();
+      var itemInvalidations = 0;
+      appState.items.addListener(() => itemInvalidations += 1);
+      final backupService = _DeferredImportBackupService();
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<AppState>.value(
+          value: appState,
+          child: MaterialApp(home: BackupScreen(backupService: backupService)),
+        ),
+      );
+      await tester.enterText(find.byType(TextField), 'secret1');
+      await tester.tap(find.text('从备份恢复'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('继续'));
+      await tester.pump();
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<AppState>.value(
+          value: appState,
+          child: const MaterialApp(home: SizedBox.shrink()),
+        ),
+      );
+      backupService.outcome.complete(BackupImportOutcome.imported);
+      await tester.pump();
+
+      expect(itemInvalidations, 1);
+      expect(appState.refreshCount, 1);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('export failure after disposal does not use the stale context', (
     tester,
   ) async {
@@ -115,6 +178,25 @@ class _ControlledBackupService extends BackupService {
   Future<void> shareBackup(String password) => _shareBackup(password);
 }
 
+class _ControlledImportBackupService extends BackupService {
+  int imports = 0;
+
+  @override
+  Future<BackupImportOutcome> importEncryptedBackup(String password) async {
+    imports += 1;
+    return BackupImportOutcome.imported;
+  }
+}
+
+class _DeferredImportBackupService extends BackupService {
+  final outcome = Completer<BackupImportOutcome>();
+
+  @override
+  Future<BackupImportOutcome> importEncryptedBackup(String password) {
+    return outcome.future;
+  }
+}
+
 class _TrackingAppState extends AppState {
   _TrackingAppState()
     : super(
@@ -125,9 +207,14 @@ class _TrackingAppState extends AppState {
       );
 
   int refreshCount = 0;
+  final ItemRepository _items = ItemRepository();
+
+  @override
+  ItemRepository get items => _items;
 
   @override
   void refresh() {
     refreshCount++;
+    super.refresh();
   }
 }

@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/models/models.dart';
 import '../../core/providers/app_state.dart';
+import '../../core/repositories/item_repository.dart';
 import '../widgets/common_widgets.dart';
 
 class FamilyScreen extends StatefulWidget {
@@ -22,21 +23,38 @@ class _FamilyScreenState extends State<FamilyScreen> {
   };
   DateTime _day = DateTime.now();
   List<ItemModel> _events = [];
+  late ItemRepository _repository;
+  int _loadGeneration = 0;
 
   @override
   void initState() {
     super.initState();
+    _repository = context.read<AppState>().items;
+    _repository.addListener(_handleItemMutation);
     _load();
   }
 
+  @override
+  void dispose() {
+    _loadGeneration += 1;
+    _repository.removeListener(_handleItemMutation);
+    super.dispose();
+  }
+
+  void _handleItemMutation() => _load();
+
   Future<void> _load() async {
+    final generation = ++_loadGeneration;
     final owners = _selected.toList();
+    final day = _day;
     if (_selected.contains(AppConstants.ownerSelf)) {
       // self handled separately if needed
     }
-    final app = context.read<AppState>();
-    _events = await app.items.getFamilyItems(_day, owners);
-    setState(() {});
+    try {
+      final events = await _repository.getFamilyItems(day, owners);
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() => _events = events);
+    } catch (_) {}
   }
 
   @override

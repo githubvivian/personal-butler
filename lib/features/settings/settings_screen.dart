@@ -37,27 +37,82 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Map<String, int> _stats = {};
   String _scheduleSummary = '';
   Future<void>? _exactAlarmPermissionRequest;
+  late AppState _appState;
+  late ItemRepository _itemRepository;
+  late int _observedDataRevision;
+  int _loadGeneration = 0;
+  int _statsGeneration = 0;
 
   @override
   void initState() {
     super.initState();
+    _appState = context.read<AppState>();
+    _itemRepository = _appState.items;
+    _observedDataRevision = _appState.dataRevision;
+    _appState.addListener(_handleExternalDataRefresh);
+    _itemRepository.addListener(_handleItemMutation);
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _loadGeneration += 1;
+    _statsGeneration += 1;
+    _appState.removeListener(_handleExternalDataRefresh);
+    _itemRepository.removeListener(_handleItemMutation);
+    super.dispose();
+  }
+
+  void _handleItemMutation() => _loadItemStats();
+
+  void _handleExternalDataRefresh() {
+    final revision = _appState.dataRevision;
+    if (revision == _observedDataRevision) return;
+    _observedDataRevision = revision;
     _load();
   }
 
   Future<void> _load() async {
-    _stats = await context.read<AppState>().items.getTodayStats();
-    final ideas = await context.read<AppState>().ideas.getAll();
-    final birthdays = await context.read<AppState>().birthdays.getAll();
-    final scheduleSettings = await context
-        .read<AppState>()
-        .schedules
-        .getSettings();
-    _stats['ideas'] = ideas.length;
-    _stats['birthdays'] = birthdays.length;
-    _scheduleSummary =
-        '第${scheduleSettings.semesterStartWeek}-${scheduleSettings.semesterEndWeek}周'
-        '${scheduleSettings.semesterStartDate == null ? '' : ' · 已设开学日期'}';
-    setState(() {});
+    final generation = ++_loadGeneration;
+    final statsGeneration = ++_statsGeneration;
+    try {
+      final stats = Map<String, int>.from(
+        await _itemRepository.getTodayStats(),
+      );
+      final ideas = await _appState.ideas.getAll();
+      final birthdays = await _appState.birthdays.getAll();
+      final scheduleSettings = await _appState.schedules.getSettings();
+      if (!mounted || generation != _loadGeneration) return;
+      stats['ideas'] = ideas.length;
+      stats['birthdays'] = birthdays.length;
+      setState(() {
+        if (statsGeneration == _statsGeneration) {
+          _stats = stats;
+        } else {
+          _stats = {
+            ..._stats,
+            'ideas': ideas.length,
+            'birthdays': birthdays.length,
+          };
+        }
+        _scheduleSummary =
+            '第${scheduleSettings.semesterStartWeek}-${scheduleSettings.semesterEndWeek}周'
+            '${scheduleSettings.semesterStartDate == null ? '' : ' · 已设开学日期'}';
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _loadItemStats() async {
+    final generation = ++_statsGeneration;
+    try {
+      final stats = Map<String, int>.from(
+        await _itemRepository.getTodayStats(),
+      );
+      if (!mounted || generation != _statsGeneration) return;
+      stats['ideas'] = _stats['ideas'] ?? 0;
+      stats['birthdays'] = _stats['birthdays'] ?? 0;
+      setState(() => _stats = stats);
+    } catch (_) {}
   }
 
   @override

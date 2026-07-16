@@ -70,13 +70,15 @@ class _BackupScreenState extends State<BackupScreen> {
       ),
     );
     if (!mounted || confirm != true) return;
+    final appState = context.read<AppState>();
     setState(() => _busy = true);
     try {
       final outcome = await _backup.importEncryptedBackup(_password.text);
-      if (!mounted) return;
       if (outcome == BackupImportOutcome.cancelled) return;
+      appState.items.invalidateAfterExternalWrite();
+      appState.refresh();
+      if (!mounted) return;
       snack(context, '恢复成功');
-      context.read<AppState>().refresh();
     } catch (e) {
       if (!mounted) return;
       snack(context, '恢复失败，请检查密码与文件');

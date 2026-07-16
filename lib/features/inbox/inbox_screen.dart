@@ -36,30 +36,69 @@ class _InboxScreenState extends State<InboxScreen> {
   Map<String, int> _stats = {};
   bool _loading = true;
   bool _ocrInFlight = false;
+  late ItemRepository _repository;
+  int _loadGeneration = 0;
 
   @override
   void initState() {
     super.initState();
+    _repository = _resolveRepository();
+    _repository.addListener(_handleItemMutation);
     _load();
   }
 
+  @override
+  void didUpdateWidget(covariant InboxScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.itemRepository != widget.itemRepository) {
+      _bindRepository(_resolveRepository());
+    }
+  }
+
+  @override
+  void dispose() {
+    _loadGeneration += 1;
+    _repository.removeListener(_handleItemMutation);
+    super.dispose();
+  }
+
+  ItemRepository _resolveRepository() {
+    return widget.itemRepository ?? context.read<AppState>().items;
+  }
+
+  void _bindRepository(ItemRepository repository) {
+    if (identical(repository, _repository)) return;
+    _repository.removeListener(_handleItemMutation);
+    _repository = repository;
+    _repository.addListener(_handleItemMutation);
+    _load();
+  }
+
+  void _handleItemMutation() => _load();
+
   Future<void> _load() async {
+    final generation = ++_loadGeneration;
+    final repository = _repository;
     if (mounted) setState(() => _loading = true);
-    final repository = widget.itemRepository ?? context.read<AppState>().items;
-    final items = await repository.getInboxItems();
-    final stats = await repository.getTodayStats();
-    if (!mounted) return;
-    setState(() {
-      _items = items;
-      _stats = stats;
-      _loading = false;
-    });
+    try {
+      final items = await repository.getInboxItems();
+      final stats = await repository.getTodayStats();
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() {
+        _items = items;
+        _stats = stats;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() => _loading = false);
+    }
   }
 
   Future<void> _pickAndOcr() async {
     if (_ocrInFlight) return;
 
-    final repository = widget.itemRepository ?? context.read<AppState>().items;
+    final repository = _repository;
     setState(() => _ocrInFlight = true);
     OverlayEntry? loadingOverlay;
 
@@ -118,7 +157,6 @@ class _InboxScreenState extends State<InboxScreen> {
       if (!mounted) return;
 
       context.push('/ocr-confirm/${draft.id}');
-      _load();
     } finally {
       loadingOverlay?.remove();
       _ocrInFlight = false;

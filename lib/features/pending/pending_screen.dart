@@ -9,12 +9,13 @@ import '../../core/repositories/item_repository.dart';
 import '../../core/services/notification_permission_coordinator.dart';
 import '../widgets/common_widgets.dart';
 
-typedef PendingItemBuilder = Widget Function(
-  BuildContext context,
-  ItemModel item,
-  VoidCallback onPostpone,
-  VoidCallback onUpdateStatus,
-);
+typedef PendingItemBuilder =
+    Widget Function(
+      BuildContext context,
+      ItemModel item,
+      VoidCallback onPostpone,
+      VoidCallback onUpdateStatus,
+    );
 
 class PendingScreen extends StatefulWidget {
   const PendingScreen({
@@ -69,35 +70,68 @@ class PendingReminderActions {
   }
 }
 
-class _PendingScreenState extends State<PendingScreen> with SingleTickerProviderStateMixin {
+class _PendingScreenState extends State<PendingScreen>
+    with SingleTickerProviderStateMixin {
   late TabController _tab;
+  late ItemRepository _repository;
   List<ItemModel> _items = [];
   bool _loading = true;
+  int _loadGeneration = 0;
 
   @override
   void initState() {
     super.initState();
     _tab = TabController(length: 4, vsync: this);
+    _repository = _resolveRepository();
+    _repository.addListener(_handleItemMutation);
     _load();
   }
 
   @override
+  void didUpdateWidget(covariant PendingScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.itemRepository != widget.itemRepository) {
+      _bindRepository(_resolveRepository());
+    }
+  }
+
+  @override
   void dispose() {
+    _loadGeneration += 1;
+    _repository.removeListener(_handleItemMutation);
     _tab.dispose();
     super.dispose();
   }
 
+  ItemRepository _resolveRepository() {
+    return widget.itemRepository ?? context.read<AppState>().items;
+  }
+
+  void _bindRepository(ItemRepository repository) {
+    if (identical(repository, _repository)) return;
+    _repository.removeListener(_handleItemMutation);
+    _repository = repository;
+    _repository.addListener(_handleItemMutation);
+    _load();
+  }
+
+  void _handleItemMutation() => _load();
+
   Future<void> _load() async {
+    final generation = ++_loadGeneration;
+    final includeDone = _tab.index == 3;
     if (mounted) setState(() => _loading = true);
-    final repository = widget.itemRepository ?? context.read<AppState>().items;
-    final items = await repository.getPendingItems(
-      includeDone: _tab.index == 3,
-    );
-    if (!mounted) return;
-    setState(() {
-      _items = items;
-      _loading = false;
-    });
+    try {
+      final items = await _repository.getPendingItems(includeDone: includeDone);
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() {
+        _items = items;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() => _loading = false);
+    }
   }
 
   List<ItemModel> get _filtered {
@@ -106,7 +140,10 @@ class _PendingScreenState extends State<PendingScreen> with SingleTickerProvider
         return _items.where((i) => i.pendingStatus == 'need_action').toList();
       case 2:
         return _items
-            .where((i) => i.pendingStatus != 'done' && i.pendingStatus != 'need_action')
+            .where(
+              (i) =>
+                  i.pendingStatus != 'done' && i.pendingStatus != 'need_action',
+            )
             .toList();
       case 3:
         return _items.where((i) => i.status == 'done').toList();
@@ -117,12 +154,15 @@ class _PendingScreenState extends State<PendingScreen> with SingleTickerProvider
 
   String _statusLabel(String? id) {
     return AppConstants.pendingStatuses
-        .firstWhere((s) => s.id == id, orElse: () => (id: id ?? '', label: id ?? '未知'))
+        .firstWhere(
+          (s) => s.id == id,
+          orElse: () => (id: id ?? '', label: id ?? '未知'),
+        )
         .label;
   }
 
   PendingReminderActions get _actions => PendingReminderActions(
-    itemRepository: widget.itemRepository ?? context.read<AppState>().items,
+    itemRepository: _repository,
     notificationPermissionCoordinator:
         widget.notificationPermissionCoordinator ??
         NotificationPermissionCoordinator.instance,
@@ -133,7 +173,6 @@ class _PendingScreenState extends State<PendingScreen> with SingleTickerProvider
     if (!mounted) return;
     final warning = permissionResult.warningMessage;
     if (warning != null) snack(context, warning);
-    await _load();
   }
 
   Future<void> _updateStatus(ItemModel item) async {
@@ -144,10 +183,12 @@ class _PendingScreenState extends State<PendingScreen> with SingleTickerProvider
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: statuses
-              .map((s) => ListTile(
-                    title: Text(s.label),
-                    onTap: () => Navigator.pop(context, s.id),
-                  ))
+              .map(
+                (s) => ListTile(
+                  title: Text(s.label),
+                  onTap: () => Navigator.pop(context, s.id),
+                ),
+              )
               .toList(),
         ),
       ),
@@ -157,7 +198,6 @@ class _PendingScreenState extends State<PendingScreen> with SingleTickerProvider
     if (!mounted) return;
     final warning = permissionResult.warningMessage;
     if (warning != null) snack(context, warning);
-    await _load();
   }
 
   @override
@@ -182,10 +222,12 @@ class _PendingScreenState extends State<PendingScreen> with SingleTickerProvider
           : RefreshIndicator(
               onRefresh: _load,
               child: _filtered.isEmpty
-                  ? ListView(children: const [
-                      SizedBox(height: 80),
-                      Center(child: Text('暂无悬而未决事项')),
-                    ])
+                  ? ListView(
+                      children: const [
+                        SizedBox(height: 80),
+                        Center(child: Text('暂无悬而未决事项')),
+                      ],
+                    )
                   : ListView.builder(
                       padding: const EdgeInsets.all(16),
                       itemCount: _filtered.length,
@@ -223,18 +265,39 @@ class _PendingScreenState extends State<PendingScreen> with SingleTickerProvider
             Row(
               children: [
                 Expanded(
-                  child: Text(item.title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                  child: Text(
+                    item.title,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ),
                 if (item.amount != null)
-                  Text('¥${item.amount!.toStringAsFixed(2)}',
-                      style: const TextStyle(color: AppColors.accentOrange, fontWeight: FontWeight.bold)),
+                  Text(
+                    '¥${item.amount!.toStringAsFixed(2)}',
+                    style: const TextStyle(
+                      color: AppColors.accentOrange,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
               ],
             ),
             const SizedBox(height: 8),
-            Text('提交：${DateFormat('yyyy-MM-dd').format(item.createdAt)}',
-                style: const TextStyle(color: AppColors.textSecondary, fontSize: 13)),
-            Text('状态：${_statusLabel(item.pendingStatus)}',
-                style: const TextStyle(color: AppColors.textSecondary, fontSize: 13)),
+            Text(
+              '提交：${DateFormat('yyyy-MM-dd').format(item.createdAt)}',
+              style: const TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: 13,
+              ),
+            ),
+            Text(
+              '状态：${_statusLabel(item.pendingStatus)}',
+              style: const TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: 13,
+              ),
+            ),
             if (follow != null)
               Text(
                 daysLeft != null && daysLeft >= 0
