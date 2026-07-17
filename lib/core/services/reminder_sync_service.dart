@@ -25,6 +25,7 @@ class ReminderSyncService {
     NotificationIdQuery? activeNotificationIds,
     ReminderScheduleAction? scheduleItemReminder,
     ReminderScheduleAction? scheduleWeakReminder,
+    DateTime Function()? now,
   }) : _cancelNotification =
            cancelNotification ?? NotificationService.instance.cancel,
        _pendingNotificationIds =
@@ -38,7 +39,8 @@ class ReminderSyncService {
            NotificationService.instance.scheduleItemReminder,
        _scheduleWeakReminder =
            scheduleWeakReminder ??
-           NotificationService.instance.scheduleWeakReminder;
+           NotificationService.instance.scheduleWeakReminder,
+       _now = now ?? DateTime.now;
 
   ReminderSyncService._() : this();
   static final ReminderSyncService instance = ReminderSyncService._();
@@ -48,6 +50,7 @@ class ReminderSyncService {
   final NotificationIdQuery _activeNotificationIds;
   final ReminderScheduleAction _scheduleItemReminder;
   final ReminderScheduleAction _scheduleWeakReminder;
+  final DateTime Function() _now;
 
   static const int notificationIdVersion = 1;
   static const int _payloadMask = 0x07ffffff;
@@ -85,7 +88,7 @@ class ReminderSyncService {
     final plans = <_ReminderPlan>[];
     final allItems = await items.getAllActiveConfirmed();
     final allBirthdays = await birthdays.getAll();
-    final now = DateTime.now();
+    final now = _now();
 
     for (final item in allItems) {
       if (!itemHasActiveReminder(item)) continue;
@@ -123,14 +126,8 @@ class ReminderSyncService {
 
     for (final birthday in allBirthdays) {
       if (birthday.isDeleted) continue;
-      final next = LunarDateHelper.nextSolarOccurrence(
-        isLunar: birthday.isLunar,
-        month: birthday.month,
-        day: birthday.day,
-        isLeapMonth: birthday.isLeapMonth,
-      );
-      if (next == null) continue;
-      final remindAt = DateTime(next.year, next.month, next.day, 9);
+      final remindAt = _nextBirthdayReminderAt(birthday, now);
+      if (remindAt == null) continue;
       final advance = remindAt.subtract(
         Duration(days: birthday.remindDaysBefore),
       );
@@ -255,21 +252,16 @@ class ReminderSyncService {
       return;
     }
 
-    final next = LunarDateHelper.nextSolarOccurrence(
-      isLunar: b.isLunar,
-      month: b.month,
-      day: b.day,
-      isLeapMonth: b.isLeapMonth,
-    );
-    if (next == null) {
+    final now = _now();
+    final remindAt = _nextBirthdayReminderAt(b, now);
+    if (remindAt == null) {
       await _runBestEffort(actions);
       return;
     }
 
-    final remindAt = DateTime(next.year, next.month, next.day, 9);
     final advance = remindAt.subtract(Duration(days: b.remindDaysBefore));
 
-    if (advance.isAfter(DateTime.now())) {
+    if (advance.isAfter(now)) {
       actions.add(
         () => _scheduleWeakReminder(
           id: birthdayAdvanceId(b.id),
@@ -279,7 +271,7 @@ class ReminderSyncService {
         ),
       );
     }
-    if (remindAt.isAfter(DateTime.now())) {
+    if (remindAt.isAfter(now)) {
       actions.add(
         () => _scheduleItemReminder(
           id: birthdayDayId(b.id),
@@ -290,6 +282,22 @@ class ReminderSyncService {
       );
     }
     await _runBestEffort(actions);
+  }
+
+  DateTime? _nextBirthdayReminderAt(BirthdayModel birthday, DateTime now) {
+    final todayReminderAt = DateTime(now.year, now.month, now.day, 9);
+    final occurrenceAfter = now.isBefore(todayReminderAt)
+        ? DateTime(now.year, now.month, now.day - 1)
+        : DateTime(now.year, now.month, now.day);
+    final occurrence = LunarDateHelper.nextSolarOccurrence(
+      isLunar: birthday.isLunar,
+      month: birthday.month,
+      day: birthday.day,
+      isLeapMonth: birthday.isLeapMonth,
+      after: occurrenceAfter,
+    );
+    if (occurrence == null) return null;
+    return DateTime(occurrence.year, occurrence.month, occurrence.day, 9);
   }
 }
 

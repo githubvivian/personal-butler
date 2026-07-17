@@ -238,6 +238,95 @@ void main() {
   );
 
   test(
+    'syncBirthday schedules today at 09:00 when it is still upcoming',
+    () async {
+      final now = DateTime(2026, 7, 18, 8, 59, 59);
+      final birthday = BirthdayModel(
+        id: 'same-day-before-nine',
+        name: 'Birthday',
+        isLunar: false,
+        month: now.month,
+        day: now.day,
+        remindDaysBefore: 1,
+        createdAt: now,
+      );
+      final strong = <int, DateTime>{};
+      final service = ReminderSyncService(
+        now: () => now,
+        cancelNotification: (_) async {},
+        scheduleItemReminder:
+            ({
+              required int id,
+              required String title,
+              required String body,
+              required DateTime when,
+            }) async => strong[id] = when,
+        scheduleWeakReminder:
+            ({
+              required int id,
+              required String title,
+              required String body,
+              required DateTime when,
+            }) async {},
+      );
+
+      await service.syncBirthday(birthday);
+
+      expect(
+        strong[ReminderSyncService.birthdayDayId(birthday.id)],
+        DateTime(2026, 7, 18, 9),
+      );
+    },
+  );
+
+  test(
+    'reconcileAll moves a same-day birthday past the 09:00 boundary',
+    () async {
+      final now = DateTime(2026, 7, 18, 9);
+      final birthday = BirthdayModel(
+        id: 'same-day-at-nine',
+        name: 'Birthday',
+        isLunar: false,
+        month: now.month,
+        day: now.day,
+        remindDaysBefore: 1,
+        createdAt: now,
+      );
+      final strong = <int, DateTime>{};
+      final service = ReminderSyncService(
+        now: () => now,
+        cancelNotification: (_) async {},
+        pendingNotificationIds: () async => <int>{},
+        activeNotificationIds: () async => <int>{},
+        scheduleItemReminder:
+            ({
+              required int id,
+              required String title,
+              required String body,
+              required DateTime when,
+            }) async => strong[id] = when,
+        scheduleWeakReminder:
+            ({
+              required int id,
+              required String title,
+              required String body,
+              required DateTime when,
+            }) async {},
+      );
+
+      await service.reconcileAll(
+        items: _EmptyItemRepository(),
+        birthdays: _BirthdayRepository([birthday]),
+      );
+
+      expect(
+        strong[ReminderSyncService.birthdayDayId(birthday.id)],
+        DateTime(2027, 7, 18, 9),
+      );
+    },
+  );
+
+  test(
     'syncAll continues with later items and birthdays after one failure',
     () async {
       final firstError = StateError('first item failed');
