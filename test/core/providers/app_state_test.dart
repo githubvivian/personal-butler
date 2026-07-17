@@ -37,7 +37,7 @@ void main() {
       );
 
       await state.bootstrap();
-      SessionService.instance.unlockVault();
+      await _authenticateVault();
       var notifications = 0;
       state.addListener(() {
         notifications++;
@@ -1225,7 +1225,7 @@ void main() {
           },
         );
         await state.bootstrap();
-        SessionService.instance.unlockVault();
+        await _authenticateVault();
         var notifications = 0;
         state.addListener(() {
           notifications++;
@@ -1263,7 +1263,7 @@ void main() {
         lockSession: () async => throw failure,
       );
       await state.bootstrap();
-      SessionService.instance.unlockVault();
+      await _authenticateVault();
 
       await expectLater(state.lock(), throwsA(same(failure)));
 
@@ -1289,7 +1289,7 @@ void main() {
         },
       );
       await state.bootstrap();
-      SessionService.instance.unlockVault();
+      await _authenticateVault();
       var notifications = 0;
       state.addListener(() {
         notifications++;
@@ -1321,7 +1321,7 @@ void main() {
         lockSession: () async => throw StateError('secure deletion failed'),
       );
       await state.bootstrap();
-      SessionService.instance.unlockVault();
+      await _authenticateVault();
 
       expect(await state.revalidateSession(), isFalse);
       await tester.pump();
@@ -1604,4 +1604,13 @@ void _setAuthenticationResult(bool result) {
         if (call.method == 'authenticate') return result;
         return null;
       });
+}
+
+Future<VaultSessionCapability> _authenticateVault() async {
+  _setAuthenticationResult(true);
+  final capability = await SessionService.instance.authenticateVault(
+    reason: 'Test vault',
+  );
+  expect(capability, isNotNull);
+  return capability!;
 }

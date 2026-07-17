@@ -1,5 +1,7 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:local_auth/local_auth.dart';
+
 import '../constants/app_constants.dart';
 
 bool isSessionWithinLifetime({
@@ -25,16 +27,66 @@ Duration? remainingSessionLifetime({
   return lifetime - elapsed;
 }
 
+@visibleForTesting
+Future<bool> authenticateAndPersistSession({
+  required Future<bool> Function() authenticate,
+  required Future<void> Function() persist,
+}) async {
+  try {
+    if (!await authenticate()) return false;
+    await persist();
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+final class VaultSessionCapability {
+  const VaultSessionCapability._(
+    this._generation,
+    this._wallIssuedAt,
+    this._issuedMonotonicMicros,
+  );
+
+  final int _generation;
+  final DateTime _wallIssuedAt;
+  final int _issuedMonotonicMicros;
+}
+
 class SessionService {
-  SessionService._();
+  SessionService._({
+    DateTime Function()? wallNow,
+    int Function()? monotonicMicros,
+  }) : _wallNow = wallNow ?? DateTime.now,
+       _monotonicMicros = monotonicMicros ?? _productionMonotonicMicros;
+
   static final SessionService instance = SessionService._();
+  static final Stopwatch _productionMonotonicClock = Stopwatch()..start();
+
+  @visibleForTesting
+  factory SessionService.forTesting({
+    required DateTime Function() wallNow,
+    required int Function() monotonicMicros,
+  }) {
+    return SessionService._(wallNow: wallNow, monotonicMicros: monotonicMicros);
+  }
+
+  static int _productionMonotonicMicros() {
+    return _productionMonotonicClock.elapsedMicroseconds;
+  }
 
   final _storage = const FlutterSecureStorage();
   final _auth = LocalAuthentication();
+  final DateTime Function() _wallNow;
+  final int Function() _monotonicMicros;
   static const _sessionKey = 'session_unlocked_at';
   static const _initializedKey = 'app_initialized';
+  static const vaultSessionLifetime = Duration(minutes: 5);
   Object? _sessionRevocationFailure;
   StackTrace? _sessionRevocationFailureStackTrace;
+  int _vaultAuthenticationGeneration = 0;
+  int _vaultGeneration = 0;
+  VaultSessionCapability? _activeVaultCapability;
 
   Future<bool> isAppInitialized() async {
     final v = await _storage.read(key: _initializedKey);
@@ -77,6 +129,7 @@ class SessionService {
   }
 
   Future<void> lock() async {
+    lockVault();
     await _storage.delete(key: _sessionKey);
   }
 
@@ -101,38 +154,114 @@ class SessionService {
     );
   }
 
-  Future<bool> authenticate({String reason = '请验证指纹以进入个人管家'}) async {
+  Future<bool> _authenticateBiometricOnly({
+    String reason = '请验证指纹以进入个人管家',
+  }) async {
     try {
-      final ok = await _auth.authenticate(
+      return await _auth.authenticate(
         localizedReason: reason,
         options: const AuthenticationOptions(
           biometricOnly: true,
           stickyAuth: true,
         ),
       );
-      if (ok) await markUnlocked();
-      return ok;
     } catch (_) {
       return false;
     }
   }
 
+  Future<bool> authenticate({String reason = '请验证指纹以进入个人管家'}) {
+    return authenticateAndPersistSession(
+      authenticate: () => _authenticateBiometricOnly(reason: reason),
+      persist: markUnlocked,
+    );
+  }
+
+  Future<VaultSessionCapability?> authenticateVault({
+    String reason = '验证指纹以打开密码库',
+  }) async {
+    final authenticationGeneration = ++_vaultAuthenticationGeneration;
+    if (!await _authenticateBiometricOnly(reason: reason)) return null;
+    if (authenticationGeneration != _vaultAuthenticationGeneration) {
+      return null;
+    }
+    return _issueVaultCapability();
+  }
+
   Future<void> stopAuthentication() async {
+    _vaultAuthenticationGeneration += 1;
     try {
       await _auth.stopAuthentication();
     } catch (_) {}
   }
 
-  DateTime? vaultUnlockedAt;
   bool get isVaultSessionValid {
-    if (vaultUnlockedAt == null) return false;
-    return isSessionWithinLifetime(
-      now: DateTime.now(),
-      unlockedAt: vaultUnlockedAt!,
-      lifetime: const Duration(minutes: 5),
-    );
+    final capability = _activeVaultCapability;
+    return capability != null && isVaultCapabilityValid(capability);
   }
 
-  void unlockVault() => vaultUnlockedAt = DateTime.now();
-  void lockVault() => vaultUnlockedAt = null;
+  VaultSessionCapability _issueVaultCapability() {
+    _vaultGeneration += 1;
+    final capability = VaultSessionCapability._(
+      _vaultGeneration,
+      _wallNow(),
+      _monotonicMicros(),
+    );
+    _activeVaultCapability = capability;
+    return capability;
+  }
+
+  VaultSessionCapability? currentVaultCapability() {
+    final capability = _activeVaultCapability;
+    if (capability == null || !isVaultCapabilityValid(capability)) {
+      return null;
+    }
+    return capability;
+  }
+
+  bool isVaultCapabilityValid(VaultSessionCapability capability) {
+    return getVaultRemainingLifetime(capability) != null;
+  }
+
+  Duration? getVaultRemainingLifetime(VaultSessionCapability capability) {
+    if (!identical(capability, _activeVaultCapability) ||
+        capability._generation != _vaultGeneration) {
+      return null;
+    }
+    final wallRemaining = remainingSessionLifetime(
+      now: _wallNow(),
+      unlockedAt: capability._wallIssuedAt,
+      lifetime: vaultSessionLifetime,
+    );
+    final monotonicElapsedMicros =
+        _monotonicMicros() - capability._issuedMonotonicMicros;
+    final monotonicRemaining =
+        monotonicElapsedMicros < 0 ||
+            monotonicElapsedMicros >= vaultSessionLifetime.inMicroseconds
+        ? null
+        : Duration(
+            microseconds:
+                vaultSessionLifetime.inMicroseconds - monotonicElapsedMicros,
+          );
+    if (wallRemaining == null || monotonicRemaining == null) {
+      lockVault();
+      return null;
+    }
+    return wallRemaining.compareTo(monotonicRemaining) <= 0
+        ? wallRemaining
+        : monotonicRemaining;
+  }
+
+  void revokeVaultCapability(VaultSessionCapability capability) {
+    if (identical(capability, _activeVaultCapability) &&
+        capability._generation == _vaultGeneration) {
+      lockVault();
+    }
+  }
+
+  void lockVault() {
+    _vaultAuthenticationGeneration += 1;
+    _vaultGeneration += 1;
+    _activeVaultCapability = null;
+  }
 }

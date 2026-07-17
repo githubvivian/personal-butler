@@ -3,6 +3,7 @@ import 'package:uuid/uuid.dart';
 import '../database/database_helper.dart';
 import '../models/models.dart';
 import '../security/encryption_service.dart';
+import '../security/session_service.dart';
 import '../services/notification_service.dart';
 import '../services/reminder_sync_service.dart';
 import '../utils/birthday_date_helper.dart';
@@ -146,16 +147,60 @@ class IdeaRepository {
 
   Future<void> softDelete(String id) async {
     final db = await DatabaseHelper.instance.database;
-    await db.update('ideas', {'is_deleted': 1}, where: 'id = ?', whereArgs: [id]);
+    await db.update(
+      'ideas',
+      {'is_deleted': 1},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
   }
 }
 
-class VaultRepository {
-  final _uuid = const Uuid();
-  final _enc = EncryptionService.instance;
+class VaultAccessDeniedException implements Exception {
+  const VaultAccessDeniedException();
 
-  Future<List<VaultEntryModel>> getAll({String? category}) async {
-    final db = await DatabaseHelper.instance.database;
+  @override
+  String toString() => 'Vault access denied: the vault session is not valid.';
+}
+
+class VaultRepository {
+  VaultRepository({
+    Future<Database> Function()? databaseProvider,
+    Future<String> Function(String)? encryptVaultField,
+    Future<String> Function(String)? decryptVaultField,
+    String Function()? createId,
+    DateTime Function()? now,
+  }) : _databaseProvider = databaseProvider ?? _defaultDatabaseProvider,
+       _encryptVaultField =
+           encryptVaultField ?? EncryptionService.instance.encryptVaultField,
+       _decryptVaultField =
+           decryptVaultField ?? EncryptionService.instance.decryptVaultField,
+       _createId = createId ?? const Uuid().v4,
+       _now = now ?? DateTime.now;
+
+  final Future<Database> Function() _databaseProvider;
+  final Future<String> Function(String) _encryptVaultField;
+  final Future<String> Function(String) _decryptVaultField;
+  final String Function() _createId;
+  final DateTime Function() _now;
+
+  static Future<Database> _defaultDatabaseProvider() {
+    return DatabaseHelper.instance.database;
+  }
+
+  void _requireCapability(VaultSessionCapability capability) {
+    if (!SessionService.instance.isVaultCapabilityValid(capability)) {
+      throw const VaultAccessDeniedException();
+    }
+  }
+
+  Future<List<VaultEntryModel>> getAll({
+    required VaultSessionCapability capability,
+    String? category,
+  }) async {
+    _requireCapability(capability);
+    final db = await _databaseProvider();
+    _requireCapability(capability);
     final rows = category == null
         ? await db.query(
             'vault_entries',
@@ -168,10 +213,12 @@ class VaultRepository {
             whereArgs: [category],
             orderBy: 'name ASC',
           );
+    _requireCapability(capability);
     return rows.map(VaultEntryModel.fromMap).toList();
   }
 
   Future<void> saveEntry({
+    required VaultSessionCapability capability,
     String? id,
     required String category,
     required String name,
@@ -179,12 +226,16 @@ class VaultRepository {
     required String password,
     String? notes,
   }) async {
-    final now = DateTime.now();
-    final passwordEnc = await _enc.encryptVaultField(password);
-    final notesEnc =
-        notes != null && notes.isNotEmpty ? await _enc.encryptVaultField(notes) : null;
+    _requireCapability(capability);
+    final passwordEnc = await _encryptVaultField(password);
+    _requireCapability(capability);
+    final notesEnc = notes != null && notes.isNotEmpty
+        ? await _encryptVaultField(notes)
+        : null;
+    _requireCapability(capability);
+    final now = _now();
     final entry = VaultEntryModel(
-      id: id ?? _uuid.v4(),
+      id: id ?? _createId(),
       category: category,
       name: name,
       account: account,
@@ -193,24 +244,45 @@ class VaultRepository {
       createdAt: now,
       updatedAt: now,
     );
-    final db = await DatabaseHelper.instance.database;
-    await db.insert(
-      'vault_entries',
-      entry.toMap(),
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    final db = await _databaseProvider();
+    _requireCapability(capability);
+    await db.transaction((transaction) async {
+      _requireCapability(capability);
+      await transaction.insert(
+        'vault_entries',
+        entry.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      _requireCapability(capability);
+    });
   }
 
-  Future<String> decryptPassword(VaultEntryModel entry) =>
-      _enc.decryptVaultField(entry.passwordEnc);
+  Future<String> decryptPassword(
+    VaultEntryModel entry, {
+    required VaultSessionCapability capability,
+  }) async {
+    _requireCapability(capability);
+    final password = await _decryptVaultField(entry.passwordEnc);
+    _requireCapability(capability);
+    return password;
+  }
 
-  Future<void> softDelete(String id) async {
-    final db = await DatabaseHelper.instance.database;
-    await db.update(
-      'vault_entries',
-      {'is_deleted': 1, 'updated_at': DateTime.now().toIso8601String()},
-      where: 'id = ?',
-      whereArgs: [id],
-    );
+  Future<void> softDelete(
+    String id, {
+    required VaultSessionCapability capability,
+  }) async {
+    _requireCapability(capability);
+    final db = await _databaseProvider();
+    _requireCapability(capability);
+    await db.transaction((transaction) async {
+      _requireCapability(capability);
+      await transaction.update(
+        'vault_entries',
+        {'is_deleted': 1, 'updated_at': _now().toIso8601String()},
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      _requireCapability(capability);
+    });
   }
 }
