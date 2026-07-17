@@ -55,6 +55,67 @@ void main() {
   });
 
   group('main session lifetime', () {
+    test('returns the exact remaining lifetime for a valid timestamp', () {
+      final now = DateTime.utc(2026, 7, 17, 12);
+
+      expect(
+        remainingSessionLifetime(
+          now: now,
+          unlockedAt: now.subtract(const Duration(minutes: 30)),
+          lifetime: const Duration(hours: 2),
+        ),
+        const Duration(minutes: 90),
+      );
+    });
+
+    test('reads the remaining lifetime from the persisted timestamp', () async {
+      final now = DateTime.utc(2026, 7, 17, 12);
+      FlutterSecureStorage.setMockInitialValues({
+        'session_unlocked_at': now
+            .subtract(const Duration(minutes: 45))
+            .toIso8601String(),
+      });
+
+      expect(
+        await session.getRemainingSessionLifetime(now: now),
+        const Duration(minutes: 75),
+      );
+    });
+
+    test('returns null when the persisted timestamp is missing', () async {
+      final now = DateTime.utc(2026, 7, 17, 12);
+
+      expect(await session.getRemainingSessionLifetime(now: now), isNull);
+    });
+
+    test('returns null when the persisted timestamp is malformed', () async {
+      FlutterSecureStorage.setMockInitialValues({
+        'session_unlocked_at': 'not-a-date',
+      });
+
+      expect(
+        await session.getRemainingSessionLifetime(
+          now: DateTime.utc(2026, 7, 17, 12),
+        ),
+        isNull,
+      );
+    });
+
+    test('returns null for a future or expired persisted timestamp', () async {
+      final now = DateTime.utc(2026, 7, 17, 12);
+
+      for (final unlockedAt in [
+        now.add(const Duration(microseconds: 1)),
+        now.subtract(const Duration(hours: 2)),
+      ]) {
+        FlutterSecureStorage.setMockInitialValues({
+          'session_unlocked_at': unlockedAt.toIso8601String(),
+        });
+
+        expect(await session.getRemainingSessionLifetime(now: now), isNull);
+      }
+    });
+
     test('rejects a persisted unlock timestamp in the future', () async {
       FlutterSecureStorage.setMockInitialValues({
         'session_unlocked_at': DateTime.now()

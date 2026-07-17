@@ -25,6 +25,7 @@ class _LockScreenState extends State<LockScreen> {
     if (!app.initialized) {
       setState(() => _busy = true);
       final ok = await app.setupFirstRun();
+      if (!mounted) return;
       setState(() {
         _busy = false;
         _error = ok ? null : '初始化失败，请重试';
@@ -33,6 +34,7 @@ class _LockScreenState extends State<LockScreen> {
     }
     setState(() => _busy = true);
     final ok = await app.unlock();
+    if (!mounted) return;
     setState(() {
       _busy = false;
       _error = ok ? null : '验证失败，请重试';
@@ -63,7 +65,11 @@ class _LockScreenState extends State<LockScreen> {
                   color: Colors.white.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(24),
                 ),
-                child: const Icon(Icons.shield_outlined, size: 48, color: Colors.white),
+                child: const Icon(
+                  Icons.shield_outlined,
+                  size: 48,
+                  color: Colors.white,
+                ),
               ),
               const SizedBox(height: 24),
               const Text(
@@ -76,7 +82,9 @@ class _LockScreenState extends State<LockScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                app.initialized ? '指纹验证 · ${AppConstants.sessionHours}小时内免重复验证' : '首次使用，请验证指纹完成初始化',
+                app.initialized
+                    ? '指纹验证 · ${AppConstants.sessionHours}小时内免重复验证'
+                    : '首次使用，请验证指纹完成初始化',
                 style: TextStyle(color: Colors.white.withValues(alpha: 0.85)),
               ),
               const SizedBox(height: 40),
@@ -87,7 +95,10 @@ class _LockScreenState extends State<LockScreen> {
                   style: FilledButton.styleFrom(
                     backgroundColor: Colors.white,
                     foregroundColor: AppColors.primary,
-                    padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 28,
+                      vertical: 14,
+                    ),
                   ),
                   onPressed: _tryUnlock,
                   icon: const Icon(Icons.fingerprint),

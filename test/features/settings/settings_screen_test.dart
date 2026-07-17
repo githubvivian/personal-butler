@@ -7,6 +7,7 @@ import 'package:personal_butler/core/providers/app_state.dart';
 import 'package:personal_butler/core/repositories/item_repository.dart';
 import 'package:personal_butler/core/repositories/other_repositories.dart';
 import 'package:personal_butler/core/repositories/schedule_repository.dart';
+import 'package:personal_butler/core/security/session_service.dart';
 import 'package:personal_butler/core/services/system_settings_service.dart';
 import 'package:personal_butler/features/settings/settings_screen.dart';
 import 'package:provider/provider.dart';
@@ -21,6 +22,8 @@ const _exactAlarmReconcileFailureMessage = '权限已开启，但会议提醒重
 const _lockFailureMessage = '会话已锁定，但安全清理未完成，请稍后重试';
 
 void main() {
+  setUp(SessionService.instance.clearSessionRevocationFailure);
+
   Future<void> pumpSettings(
     WidgetTester tester,
     NotificationSettingsOpener opener,

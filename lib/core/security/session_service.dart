@@ -7,8 +7,22 @@ bool isSessionWithinLifetime({
   required DateTime unlockedAt,
   required Duration lifetime,
 }) {
+  return remainingSessionLifetime(
+        now: now,
+        unlockedAt: unlockedAt,
+        lifetime: lifetime,
+      ) !=
+      null;
+}
+
+Duration? remainingSessionLifetime({
+  required DateTime now,
+  required DateTime unlockedAt,
+  required Duration lifetime,
+}) {
   final elapsed = now.difference(unlockedAt);
-  return !elapsed.isNegative && elapsed < lifetime;
+  if (elapsed.isNegative || elapsed >= lifetime) return null;
+  return lifetime - elapsed;
 }
 
 class SessionService {
@@ -19,6 +33,8 @@ class SessionService {
   final _auth = LocalAuthentication();
   static const _sessionKey = 'session_unlocked_at';
   static const _initializedKey = 'app_initialized';
+  Object? _sessionRevocationFailure;
+  StackTrace? _sessionRevocationFailureStackTrace;
 
   Future<bool> isAppInitialized() async {
     final v = await _storage.read(key: _initializedKey);
@@ -38,12 +54,16 @@ class SessionService {
   }
 
   Future<bool> isSessionValid() async {
+    return await getRemainingSessionLifetime() != null;
+  }
+
+  Future<Duration?> getRemainingSessionLifetime({DateTime? now}) async {
     final raw = await _storage.read(key: _sessionKey);
-    if (raw == null) return false;
+    if (raw == null) return null;
     final unlockedAt = DateTime.tryParse(raw);
-    if (unlockedAt == null) return false;
-    return isSessionWithinLifetime(
-      now: DateTime.now(),
+    if (unlockedAt == null) return null;
+    return remainingSessionLifetime(
+      now: now ?? DateTime.now(),
       unlockedAt: unlockedAt,
       lifetime: const Duration(hours: AppConstants.sessionHours),
     );
@@ -60,6 +80,27 @@ class SessionService {
     await _storage.delete(key: _sessionKey);
   }
 
+  void recordSessionRevocationFailure(Object error, StackTrace stackTrace) {
+    _sessionRevocationFailure = error;
+    _sessionRevocationFailureStackTrace = stackTrace;
+  }
+
+  void clearSessionRevocationFailure() {
+    _sessionRevocationFailure = null;
+    _sessionRevocationFailureStackTrace = null;
+  }
+
+  bool get hasSessionRevocationFailure => _sessionRevocationFailure != null;
+
+  void throwIfSessionRevocationFailed() {
+    final error = _sessionRevocationFailure;
+    if (error == null) return;
+    Error.throwWithStackTrace(
+      error,
+      _sessionRevocationFailureStackTrace ?? StackTrace.current,
+    );
+  }
+
   Future<bool> authenticate({String reason = '请验证指纹以进入个人管家'}) async {
     try {
       final ok = await _auth.authenticate(
@@ -74,6 +115,12 @@ class SessionService {
     } catch (_) {
       return false;
     }
+  }
+
+  Future<void> stopAuthentication() async {
+    try {
+      await _auth.stopAuthentication();
+    } catch (_) {}
   }
 
   DateTime? vaultUnlockedAt;
