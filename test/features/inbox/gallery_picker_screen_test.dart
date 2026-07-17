@@ -130,6 +130,55 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('limited non-empty gallery can select more photos and reload', (
+    tester,
+  ) async {
+    final firstAsset = AssetEntity(
+      id: 'asset-1',
+      typeInt: AssetType.image.index,
+      width: 100,
+      height: 100,
+    );
+    final secondAsset = AssetEntity(
+      id: 'asset-2',
+      typeInt: AssetType.image.index,
+      width: 100,
+      height: 100,
+    );
+    final plugin = _GalleryPhotoManagerPlugin(
+      permissionStates: [PermissionState.limited, PermissionState.limited],
+      pathResults: [
+        [_allImagesPath],
+        [_allImagesPath],
+      ],
+      assetResults: [
+        [firstAsset],
+        [firstAsset, secondAsset],
+      ],
+    );
+    PhotoManager.withPlugin(plugin);
+
+    await tester.pumpWidget(const MaterialApp(home: GalleryPickerScreen()));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(GridView), findsOneWidget);
+    expect(
+      find.byKey(const Key('gallery_select_more_limited')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const Key('gallery_select_more_limited')));
+    await tester.pumpAndSettle();
+
+    expect(plugin.presentLimitedTypes, [RequestType.image]);
+    expect(plugin.permissionOptions, hasLength(2));
+    expect(plugin.pathTypes, hasLength(2));
+    expect(plugin.assetPathIds, ['all-images', 'all-images']);
+    expect(plugin.thumbnailAssetIds, containsAll(['asset-1', 'asset-2']));
+    expect(find.byType(GridView), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('permission check failure shows a safe retry state', (
     tester,
   ) async {

@@ -184,33 +184,55 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen> {
                 ],
               ),
             )
-          : GridView.builder(
-              padding: const EdgeInsets.all(8),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 3,
-                crossAxisSpacing: 4,
-                mainAxisSpacing: 4,
-              ),
-              itemCount: _assets.length,
-              itemBuilder: (_, i) {
-                final asset = _assets[i];
-                return GestureDetector(
-                  onTap: () => Navigator.pop(context, asset.id),
-                  child: FutureBuilder<Widget?>(
-                    future: _thumb(asset),
-                    builder: (_, snap) {
-                      if (!snap.hasData) {
-                        return Container(color: AppColors.border);
-                      }
-                      return ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: snap.data,
-                      );
-                    },
-                  ),
-                );
-              },
+          : _buildGallery(),
+    );
+  }
+
+  Widget _buildGallery() {
+    final grid = GridView.builder(
+      padding: const EdgeInsets.all(8),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        crossAxisSpacing: 4,
+        mainAxisSpacing: 4,
+      ),
+      itemCount: _assets.length,
+      itemBuilder: (_, i) {
+        final asset = _assets[i];
+        return GestureDetector(
+          onTap: () => Navigator.pop(context, asset.id),
+          child: FutureBuilder<Widget?>(
+            future: _thumb(asset),
+            builder: (_, snap) {
+              if (!snap.hasData) {
+                return Container(color: AppColors.border);
+              }
+              return ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: snap.data,
+              );
+            },
+          ),
+        );
+      },
+    );
+    if (_permissionState != PermissionState.limited) return grid;
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+          child: SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              key: const Key('gallery_select_more_limited'),
+              onPressed: _selectLimitedPhotos,
+              icon: const Icon(Icons.add_photo_alternate_outlined),
+              label: const Text('选择更多照片'),
             ),
+          ),
+        ),
+        Expanded(child: grid),
+      ],
     );
   }
 
