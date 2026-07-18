@@ -17,24 +17,48 @@ const pendingItemTypes = <String>['task', 'reimbursement', 'review'];
 
 bool isPendingItemType(String type) => pendingItemTypes.contains(type);
 
-class ItemModel {
+abstract interface class ReminderItemView {
+  String get id;
+  String get type;
+  String get title;
+  DateTime? get startAt;
+  String? get location;
+  String get status;
+  String get inboxStatus;
+  DateTime? get nextFollowUpAt;
+  int get reminderMinutes;
+  bool get isDeleted;
+  bool get isPendingType;
+}
+
+class ItemModel implements ReminderItemView {
+  @override
   final String id;
+  @override
   final String type;
+  @override
   final String title;
   final String? description;
   final String owner;
+  @override
   final DateTime? startAt;
   final DateTime? endAt;
+  @override
   final String? location;
   final String? participants;
+  @override
   final String status;
+  @override
   final String inboxStatus;
   final String? pendingStatus;
+  @override
   final DateTime? nextFollowUpAt;
   final double? amount;
   final String? ocrText;
   final String? notes;
+  @override
   final int reminderMinutes;
+  @override
   final bool isDeleted;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -62,6 +86,7 @@ class ItemModel {
     required this.updatedAt,
   });
 
+  @override
   bool get isPendingType => isPendingItemType(type);
   bool get isInbox => inboxStatus == 'inbox';
   bool get isSoftDeleted => isDeleted;
@@ -158,6 +183,80 @@ class ItemModel {
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
     };
+  }
+}
+
+/// The columns needed to rebuild notifications without loading OCR or notes.
+class ReminderItemSnapshot implements ReminderItemView {
+  const ReminderItemSnapshot({
+    required this.id,
+    required this.type,
+    required this.title,
+    this.startAt,
+    this.location,
+    this.status = 'active',
+    this.inboxStatus = 'confirmed',
+    this.nextFollowUpAt,
+    this.reminderMinutes = 60,
+    this.isDeleted = false,
+    required this.updatedAt,
+  });
+
+  @override
+  final String id;
+  @override
+  final String type;
+  @override
+  final String title;
+  @override
+  final DateTime? startAt;
+  @override
+  final String? location;
+  @override
+  final String status;
+  @override
+  final String inboxStatus;
+  @override
+  final DateTime? nextFollowUpAt;
+  @override
+  final int reminderMinutes;
+  @override
+  final bool isDeleted;
+  final DateTime updatedAt;
+
+  @override
+  bool get isPendingType => isPendingItemType(type);
+
+  factory ReminderItemSnapshot.fromMap(Map<String, dynamic> map) {
+    return ReminderItemSnapshot(
+      id: map['id'] as String,
+      type: map['type'] as String,
+      title: map['title'] as String,
+      startAt: _parseModelDate(map['start_at']),
+      location: map['location'] as String?,
+      status: map['status'] as String? ?? 'active',
+      inboxStatus: map['inbox_status'] as String? ?? 'confirmed',
+      nextFollowUpAt: _parseModelDate(map['next_follow_up_at']),
+      reminderMinutes: map['reminder_minutes'] as int? ?? 60,
+      isDeleted: (map['is_deleted'] as int? ?? 0) == 1,
+      updatedAt: DateTime.parse(map['updated_at'] as String),
+    );
+  }
+
+  factory ReminderItemSnapshot.fromItem(ItemModel item) {
+    return ReminderItemSnapshot(
+      id: item.id,
+      type: item.type,
+      title: item.title,
+      startAt: item.startAt,
+      location: item.location,
+      status: item.status,
+      inboxStatus: item.inboxStatus,
+      nextFollowUpAt: item.nextFollowUpAt,
+      reminderMinutes: item.reminderMinutes,
+      isDeleted: item.isDeleted,
+      updatedAt: item.updatedAt,
+    );
   }
 }
 

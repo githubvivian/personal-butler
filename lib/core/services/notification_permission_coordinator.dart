@@ -14,7 +14,7 @@ extension NotificationPermissionResultMessage on NotificationPermissionResult {
   }
 }
 
-bool itemHasActiveReminder(ItemModel item) {
+bool itemHasActiveReminder(ReminderItemView item) {
   if (item.isDeleted ||
       item.inboxStatus != 'confirmed' ||
       item.status == 'done') {

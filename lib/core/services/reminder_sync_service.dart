@@ -107,7 +107,7 @@ class ReminderSyncService {
     required BirthdayRepository birthdays,
   }) async {
     final plans = <_ReminderPlan>[];
-    final allItems = await items.getAllActiveConfirmed();
+    final allItems = await items.getActiveReminderSnapshots();
     final allBirthdays = await birthdays.getAll();
     final now = _now();
 

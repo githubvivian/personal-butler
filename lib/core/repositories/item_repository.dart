@@ -29,6 +29,20 @@ class ItemRepository extends ChangeNotifier {
     return DatabaseHelper.instance.database;
   }
 
+  static const reminderSnapshotColumns = <String>[
+    'id',
+    'type',
+    'title',
+    'start_at',
+    'location',
+    'status',
+    'inbox_status',
+    'next_follow_up_at',
+    'reminder_minutes',
+    'is_deleted',
+    'updated_at',
+  ];
+
   Future<List<ItemModel>> getInboxItems() async {
     final db = await _databaseProvider();
     final pendingPlaceholders = List.filled(
@@ -123,6 +137,17 @@ class ItemRepository extends ChangeNotifier {
       whereArgs: ['confirmed'],
     );
     return rows.map(ItemModel.fromMap).toList();
+  }
+
+  Future<List<ReminderItemSnapshot>> getActiveReminderSnapshots() async {
+    final db = await _databaseProvider();
+    final rows = await db.query(
+      'items',
+      columns: reminderSnapshotColumns,
+      where: 'is_deleted = 0 AND inbox_status = ?',
+      whereArgs: ['confirmed'],
+    );
+    return rows.map(ReminderItemSnapshot.fromMap).toList();
   }
 
   Future<void> save(ItemModel item) {

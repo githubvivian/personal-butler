@@ -523,6 +523,50 @@ void main() {
     );
   });
 
+  group('ItemRepository reminder projection', () {
+    test('loads only the fields needed to rebuild reminders', () async {
+      final item = _buildItem('reminder-projection');
+      await database.insert('items', item.toMap());
+
+      final snapshots = await repository.getActiveReminderSnapshots();
+
+      expect(snapshots, hasLength(1));
+      final snapshot = snapshots.single;
+      expect(snapshot.id, item.id);
+      expect(snapshot.type, item.type);
+      expect(snapshot.title, item.title);
+      expect(snapshot.startAt, item.startAt);
+      expect(snapshot.location, item.location);
+      expect(snapshot.status, item.status);
+      expect(snapshot.inboxStatus, item.inboxStatus);
+      expect(snapshot.nextFollowUpAt, item.nextFollowUpAt);
+      expect(snapshot.reminderMinutes, item.reminderMinutes);
+      expect(snapshot.updatedAt, item.updatedAt);
+      expect(
+        ItemRepository.reminderSnapshotColumns,
+        isNot(contains('ocr_text')),
+      );
+      expect(ItemRepository.reminderSnapshotColumns, isNot(contains('notes')));
+      expect(
+        ItemRepository.reminderSnapshotColumns,
+        isNot(contains('description')),
+      );
+    });
+
+    test('excludes deleted and unconfirmed rows', () async {
+      final deleted = _buildItem(
+        'reminder-projection-deleted',
+      ).copyWith(isDeleted: true);
+      final inbox = _buildItem(
+        'reminder-projection-inbox',
+      ).copyWith(inboxStatus: 'inbox');
+      await database.insert('items', deleted.toMap());
+      await database.insert('items', inbox.toMap());
+
+      expect(await repository.getActiveReminderSnapshots(), isEmpty);
+    });
+  });
+
   group('PendingReminderActions atomic mutations', () {
     test(
       'concurrent postpone and status updates preserve both changes and fresh fields',

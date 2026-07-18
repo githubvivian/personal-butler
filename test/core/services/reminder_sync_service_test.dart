@@ -514,6 +514,49 @@ void main() {
     expect(scheduled, [desiredId]);
   });
 
+  test('reconcileAll reads lightweight reminder snapshots', () async {
+    final now = DateTime(2026, 7, 19, 8);
+    final snapshot = ReminderItemSnapshot(
+      id: 'lightweight-reminder',
+      type: 'meeting',
+      title: 'Lightweight reminder',
+      startAt: now.add(const Duration(hours: 2)),
+      location: 'Office',
+      updatedAt: now,
+    );
+    final repository = _SnapshotOnlyItemRepository([snapshot]);
+    final scheduled = <int>[];
+    final service = ReminderSyncService(
+      now: () => now,
+      cancelNotification: (_) async {},
+      pendingNotificationIds: () async => <int>{},
+      activeNotificationIds: () async => <int>{},
+      scheduleItemReminder:
+          ({
+            required int id,
+            required String title,
+            required String body,
+            required DateTime when,
+          }) async => scheduled.add(id),
+      scheduleWeakReminder:
+          ({
+            required int id,
+            required String title,
+            required String body,
+            required DateTime when,
+          }) async {},
+    );
+
+    await service.reconcileAll(
+      items: repository,
+      birthdays: _EmptyBirthdayRepository(),
+    );
+
+    expect(repository.snapshotReads, 1);
+    expect(repository.fullItemReads, 0);
+    expect(scheduled, [ReminderSyncService.itemId(snapshot.id)]);
+  });
+
   test('reconcileAll preserves an active notification', () async {
     final cancelled = <int>[];
     final service = ReminderSyncService(
@@ -839,6 +882,9 @@ ItemModel _pendingItem({
 class _EmptyItemRepository extends ItemRepository {
   @override
   Future<List<ItemModel>> getAllActiveConfirmed() async => [];
+
+  @override
+  Future<List<ReminderItemSnapshot>> getActiveReminderSnapshots() async => [];
 }
 
 class _ItemRepository extends ItemRepository {
@@ -848,6 +894,31 @@ class _ItemRepository extends ItemRepository {
 
   @override
   Future<List<ItemModel>> getAllActiveConfirmed() async => items;
+
+  @override
+  Future<List<ReminderItemSnapshot>> getActiveReminderSnapshots() async => [
+    for (final item in items) ReminderItemSnapshot.fromItem(item),
+  ];
+}
+
+class _SnapshotOnlyItemRepository extends ItemRepository {
+  _SnapshotOnlyItemRepository(this.snapshots);
+
+  final List<ReminderItemSnapshot> snapshots;
+  int fullItemReads = 0;
+  int snapshotReads = 0;
+
+  @override
+  Future<List<ItemModel>> getAllActiveConfirmed() async {
+    fullItemReads++;
+    throw StateError('full item rows must not be loaded for reconciliation');
+  }
+
+  @override
+  Future<List<ReminderItemSnapshot>> getActiveReminderSnapshots() async {
+    snapshotReads++;
+    return snapshots;
+  }
 }
 
 class _EmptyBirthdayRepository extends BirthdayRepository {
