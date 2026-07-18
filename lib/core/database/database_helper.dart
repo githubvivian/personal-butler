@@ -1,11 +1,19 @@
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 import '../constants/app_constants.dart';
 import '../security/encryption_service.dart';
 import 'database_schema.dart';
 
+typedef DatabaseOpener = Future<Database> Function();
+
 class DatabaseHelper {
-  DatabaseHelper._();
+  DatabaseHelper._() : _databaseOpener = null;
+
+  @visibleForTesting
+  DatabaseHelper.forTesting({required DatabaseOpener databaseOpener})
+    : _databaseOpener = databaseOpener;
+
   static final DatabaseHelper instance = DatabaseHelper._();
   static const backupTableNames = <String>[
     'items',
@@ -16,12 +24,36 @@ class DatabaseHelper {
     'ideas',
     'vault_entries',
   ];
+  final DatabaseOpener? _databaseOpener;
   Database? _db;
+  Future<Database>? _opening;
 
-  Future<Database> get database async {
-    if (_db != null) return _db!;
-    _db = await _initDb();
-    return _db!;
+  Future<Database> get database {
+    final current = _db;
+    if (current != null) return Future<Database>.value(current);
+
+    final opening = _opening;
+    if (opening != null) return opening;
+
+    final rawOpening = Future<Database>.sync(
+      () => (_databaseOpener ?? _initDb)(),
+    );
+    late final Future<Database> trackedOpening;
+    trackedOpening = rawOpening.then<Database>(
+      (database) {
+        if (identical(_opening, trackedOpening)) {
+          _db = database;
+          _opening = null;
+        }
+        return database;
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        if (identical(_opening, trackedOpening)) _opening = null;
+        Error.throwWithStackTrace(error, stackTrace);
+      },
+    );
+    _opening = trackedOpening;
+    return trackedOpening;
   }
 
   Future<Database> _initDb() async {
@@ -38,8 +70,19 @@ class DatabaseHelper {
   }
 
   Future<void> close() async {
-    await _db?.close();
+    final opening = _opening;
+    _opening = null;
+    final database = _db;
     _db = null;
+    await database?.close();
+    if (opening != null) {
+      try {
+        final opened = await opening;
+        if (!identical(opened, database)) await opened.close();
+      } catch (_) {
+        // A failed in-flight open has no database to close.
+      }
+    }
   }
 
   Future<void> replaceAllData(
