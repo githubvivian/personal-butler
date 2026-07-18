@@ -88,36 +88,39 @@ class _IdeasScreenState extends State<IdeasScreen> {
       builder: (_) => StatefulBuilder(
         builder: (context, setLocal) => AlertDialog(
           title: const Text('记录灵感'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: title,
-                decoration: const InputDecoration(labelText: '标题'),
-              ),
-              TextField(
-                controller: content,
-                maxLines: 4,
-                decoration: const InputDecoration(labelText: '内容'),
-              ),
-              DropdownButtonFormField<String>(
-                value: tag,
-                items: AppConstants.ideaTags
-                    .map((t) => DropdownMenuItem(value: t, child: Text(t)))
-                    .toList(),
-                onChanged: (v) => setLocal(() => tag = v ?? tag),
-              ),
-              if (errorText != null) ...[
-                const SizedBox(height: 8),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    errorText!,
-                    style: const TextStyle(color: AppColors.danger),
-                  ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: title,
+                  decoration: const InputDecoration(labelText: '标题'),
                 ),
+                TextField(
+                  controller: content,
+                  maxLines: 4,
+                  decoration: const InputDecoration(labelText: '内容'),
+                ),
+                DropdownButtonFormField<String>(
+                  isExpanded: true,
+                  value: tag,
+                  items: AppConstants.ideaTags
+                      .map((t) => DropdownMenuItem(value: t, child: Text(t)))
+                      .toList(),
+                  onChanged: (v) => setLocal(() => tag = v ?? tag),
+                ),
+                if (errorText != null) ...[
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      errorText!,
+                      style: const TextStyle(color: AppColors.danger),
+                    ),
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
           actions: [
             TextButton(
@@ -158,11 +161,10 @@ class _IdeasScreenState extends State<IdeasScreen> {
       ),
       body: Column(
         children: [
-          SizedBox(
-            height: 48,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
               children: [
                 Padding(
                   padding: const EdgeInsets.only(right: 8),

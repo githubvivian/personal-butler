@@ -150,7 +150,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
     if (!_hasSnapshot) {
       return ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
         children: [
           const SizedBox(height: 80),
           if (_loadStatus == DataLoadStatus.loading)
@@ -163,7 +163,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      // Leave room for the shell FAB so the final event card is not covered.
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
       children: [
         if (_loadStatus == DataLoadStatus.loading) ...[
           const LinearProgressIndicator(),

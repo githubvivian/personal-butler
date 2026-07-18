@@ -368,6 +368,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                         SizedBox(
                           width: 128,
                           child: DropdownButtonFormField<int>(
+                            isExpanded: true,
                             value: selectedWeek,
                             decoration: const InputDecoration(
                               labelText: '查看周次',

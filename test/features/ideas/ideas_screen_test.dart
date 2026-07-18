@@ -217,6 +217,39 @@ void main() {
     expect(repository.getAllCalls, 1);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('idea editor remains usable in a narrow large-text viewport', (
+    tester,
+  ) async {
+    final repository = _ScriptedIdeaRepository([<IdeaModel>[]]);
+
+    await tester.pumpWidget(
+      _narrowLargeTextHost(IdeasScreen(ideaRepository: repository)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.add));
+    await tester.pumpAndSettle();
+
+    expect(find.text('记录灵感'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+}
+
+Widget _narrowLargeTextHost(Widget child) {
+  return MaterialApp(
+    home: SizedBox(
+      width: 320,
+      height: 480,
+      child: MediaQuery(
+        data: const MediaQueryData(
+          size: Size(320, 480),
+          textScaler: TextScaler.linear(2),
+        ),
+        child: child,
+      ),
+    ),
+  );
 }
 
 class _ScriptedIdeaRepository extends IdeaRepository {

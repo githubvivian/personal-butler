@@ -85,6 +85,27 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('plain card'), findsOneWidget);
   });
+
+  testWidgets('SectionHeader constrains long titles beside trailing actions', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SizedBox(
+          width: 240,
+          child: Scaffold(
+            body: SectionHeader(
+              title: '这是一个很长的栏目标题，用来验证窄屏布局',
+              trailing: FilledButton(onPressed: () {}, child: const Text('操作')),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('操作'), findsOneWidget);
+  });
 }
 
 Widget _listHost({required Widget child}) {

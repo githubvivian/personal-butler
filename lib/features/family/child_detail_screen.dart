@@ -402,6 +402,7 @@ class _ChildDetailScreenState extends State<ChildDetailScreen>
                               SizedBox(
                                 width: 124,
                                 child: DropdownButtonFormField<int>(
+                                  isExpanded: true,
                                   value: selectedWeek,
                                   decoration: const InputDecoration(
                                     labelText: '周次',

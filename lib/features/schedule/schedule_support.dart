@@ -218,6 +218,7 @@ Future<ScheduleEntryDraft?> showScheduleEntryEditor(
                       },
                     ),
                     DropdownButtonFormField<int>(
+                      isExpanded: true,
                       value: weekday,
                       decoration: const InputDecoration(labelText: '星期'),
                       items: List.generate(
@@ -261,6 +262,7 @@ Future<ScheduleEntryDraft?> showScheduleEntryEditor(
                       children: [
                         Expanded(
                           child: DropdownButtonFormField<int>(
+                            isExpanded: true,
                             value: startWeek,
                             decoration: const InputDecoration(labelText: '起始周'),
                             items: weekItems,
@@ -279,6 +281,7 @@ Future<ScheduleEntryDraft?> showScheduleEntryEditor(
                         const SizedBox(width: 12),
                         Expanded(
                           child: DropdownButtonFormField<int>(
+                            isExpanded: true,
                             value: endWeek,
                             decoration: const InputDecoration(labelText: '结束周'),
                             items: weekItems
@@ -298,6 +301,7 @@ Future<ScheduleEntryDraft?> showScheduleEntryEditor(
                       ],
                     ),
                     DropdownButtonFormField<String>(
+                      isExpanded: true,
                       value: repeatMode,
                       decoration: const InputDecoration(labelText: '排课规则'),
                       items: const [

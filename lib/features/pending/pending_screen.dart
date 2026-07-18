@@ -197,16 +197,22 @@ class _PendingScreenState extends State<PendingScreen>
     final selected = await showModalBottomSheet<String>(
       context: context,
       builder: (_) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: statuses
-              .map(
-                (s) => ListTile(
-                  title: Text(s.label),
-                  onTap: () => Navigator.pop(context, s.id),
-                ),
-              )
-              .toList(),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(context).height * 0.6,
+          ),
+          child: ListView(
+            shrinkWrap: true,
+            padding: EdgeInsets.zero,
+            children: statuses
+                .map(
+                  (s) => ListTile(
+                    title: Text(s.label),
+                    onTap: () => Navigator.pop(context, s.id),
+                  ),
+                )
+                .toList(),
+          ),
         ),
       ),
     );

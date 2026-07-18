@@ -798,11 +798,10 @@ class _VaultScreenState extends State<VaultScreen> {
   Widget _buildUnlocked() {
     return Column(
       children: [
-        SizedBox(
-          height: 48,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.all(8),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.all(8),
+          child: Row(
             children: [
               ChoiceChip(
                 label: const Text('全部'),

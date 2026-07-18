@@ -91,16 +91,22 @@ class SectionHeader extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(4, 8, 4, 12),
       child: Row(
         children: [
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
-              color: AppColors.textPrimary,
+          Expanded(
+            child: Text(
+              title,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary,
+              ),
             ),
           ),
-          const Spacer(),
-          if (trailing != null) trailing!,
+          if (trailing != null) ...[
+            const SizedBox(width: 8),
+            Flexible(child: trailing!),
+          ],
         ],
       ),
     );

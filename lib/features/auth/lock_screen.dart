@@ -55,60 +55,81 @@ class _LockScreenState extends State<LockScreen> {
           ),
         ),
         child: SafeArea(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: 96,
-                height: 96,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(24),
+          child: LayoutBuilder(
+            builder: (context, constraints) => SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  minHeight: constraints.maxHeight > 32
+                      ? constraints.maxHeight - 32
+                      : 0,
                 ),
-                child: const Icon(
-                  Icons.shield_outlined,
-                  size: 48,
-                  color: Colors.white,
-                ),
-              ),
-              const SizedBox(height: 24),
-              const Text(
-                AppConstants.appName,
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 28,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                app.initialized
-                    ? '指纹验证 · ${AppConstants.sessionHours}小时内免重复验证'
-                    : '首次使用，请验证指纹完成初始化',
-                style: TextStyle(color: Colors.white.withValues(alpha: 0.85)),
-              ),
-              const SizedBox(height: 40),
-              if (_busy)
-                const CircularProgressIndicator(color: Colors.white)
-              else
-                FilledButton.icon(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: Colors.white,
-                    foregroundColor: AppColors.primary,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 28,
-                      vertical: 14,
-                    ),
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Container(
+                        width: 96,
+                        height: 96,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(24),
+                        ),
+                        child: const Icon(
+                          Icons.shield_outlined,
+                          size: 48,
+                          color: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      const Text(
+                        AppConstants.appName,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 28,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        app.initialized
+                            ? '指纹验证 · ${AppConstants.sessionHours}小时内免重复验证'
+                            : '首次使用，请验证指纹完成初始化',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.85),
+                        ),
+                      ),
+                      const SizedBox(height: 40),
+                      if (_busy)
+                        const CircularProgressIndicator(color: Colors.white)
+                      else
+                        FilledButton.icon(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: Colors.white,
+                            foregroundColor: AppColors.primary,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 28,
+                              vertical: 14,
+                            ),
+                          ),
+                          onPressed: _tryUnlock,
+                          icon: const Icon(Icons.fingerprint),
+                          label: Text(app.initialized ? '验证指纹' : '开始初始化'),
+                        ),
+                      if (_error != null) ...[
+                        const SizedBox(height: 16),
+                        Text(
+                          _error!,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: Colors.white70),
+                        ),
+                      ],
+                    ],
                   ),
-                  onPressed: _tryUnlock,
-                  icon: const Icon(Icons.fingerprint),
-                  label: Text(app.initialized ? '验证指纹' : '开始初始化'),
                 ),
-              if (_error != null) ...[
-                const SizedBox(height: 16),
-                Text(_error!, style: const TextStyle(color: Colors.white70)),
-              ],
-            ],
+              ),
+            ),
           ),
         ),
       ),

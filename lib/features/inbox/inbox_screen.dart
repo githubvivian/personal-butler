@@ -233,7 +233,7 @@ class _InboxScreenState extends State<InboxScreen> {
     if (!_hasSnapshot) {
       return ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
         children: [
           const SizedBox(height: 120),
           if (_loadStatus == DataLoadStatus.loading)
@@ -246,7 +246,8 @@ class _InboxScreenState extends State<InboxScreen> {
 
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.all(16),
+      // Leave room for the shell FAB so the last card/action remains reachable.
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
       children: [
         if (_loadStatus == DataLoadStatus.loading) ...[
           const LinearProgressIndicator(),
@@ -313,6 +314,9 @@ class _InboxScreenState extends State<InboxScreen> {
             ),
             Text(
               label,
+              maxLines: 2,
+              textAlign: TextAlign.center,
+              overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 fontSize: 12,
                 color: AppColors.textSecondary,
@@ -362,7 +366,13 @@ class _InboxScreenState extends State<InboxScreen> {
                       : AppColors.primary,
                 ),
                 const SizedBox(height: 6),
-                Text(label, style: const TextStyle(fontSize: 12)),
+                Text(
+                  label,
+                  maxLines: 2,
+                  textAlign: TextAlign.center,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12),
+                ),
               ],
             ),
           ),

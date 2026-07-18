@@ -19,22 +19,24 @@ class StartupLoadingScreen extends StatelessWidget {
           ),
         ),
         child: const SafeArea(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.shield_outlined, size: 64, color: Colors.white),
-              SizedBox(height: 24),
-              Text(
-                '正在安全启动…',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w600,
+          child: _ScrollableCenteredContent(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.shield_outlined, size: 64, color: Colors.white),
+                SizedBox(height: 24),
+                Text(
+                  '正在安全启动…',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
-              ),
-              SizedBox(height: 24),
-              CircularProgressIndicator(color: Colors.white),
-            ],
+                SizedBox(height: 24),
+                CircularProgressIndicator(color: Colors.white),
+              ],
+            ),
           ),
         ),
       ),
@@ -52,7 +54,7 @@ class StartupErrorScreen extends StatelessWidget {
     return Scaffold(
       key: const Key('startup-error-screen'),
       body: SafeArea(
-        child: Center(
+        child: _ScrollableCenteredContent(
           child: Padding(
             padding: const EdgeInsets.all(32),
             child: Column(
@@ -101,6 +103,31 @@ class StartupErrorScreen extends StatelessWidget {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Keeps the startup states centered on normal screens while allowing the
+/// content to scroll on short displays or with a larger text scale.
+class _ScrollableCenteredContent extends StatelessWidget {
+  const _ScrollableCenteredContent({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            minHeight: constraints.maxHeight > 32
+                ? constraints.maxHeight - 32
+                : 0,
+          ),
+          child: Center(child: child),
         ),
       ),
     );
