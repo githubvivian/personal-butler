@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -538,6 +540,60 @@ void main() {
       expect(find.byType(TextField), findsNWidgets(3));
       expect(find.byType(Image), findsNothing);
       expect(find.textContaining('private asset path'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('restored local attachment is shown in the OCR editor', (
+      tester,
+    ) async {
+      late Directory directory;
+      late File file;
+      await tester.runAsync(() async {
+        directory = await Directory.systemTemp.createTemp(
+          'personal_butler_local_attachment_',
+        );
+        file = File('${directory.path}/preview.png');
+        await file.writeAsBytes(
+          base64Decode(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+          ),
+        );
+      });
+      addTearDown(() async {
+        await tester.runAsync(() => directory.delete(recursive: true));
+      });
+      final item = _item('ocr-local-preview', ocrText: 'OCR body');
+      final repository = _FakeItemRepository(
+        getByIdResults: [item],
+        attachmentResults: [
+          [
+            AttachmentModel(
+              id: 'attachment-1',
+              itemId: item.id,
+              assetId: 'local:${file.path}',
+              createdAt: DateTime.utc(2026, 7, 15),
+            ),
+          ],
+        ],
+      );
+
+      // Flutter widget tests use a fake async zone.  Start the widget and
+      // perform the real local-file I/O in runAsync, then use bounded frame
+      // polling instead of pumpAndSettle so a decoder cannot make the test
+      // wait indefinitely.
+      await tester.runAsync(() async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: OcrConfirmScreen(itemId: item.id, itemRepository: repository),
+          ),
+        );
+        for (var i = 0; i < 40 && find.byType(Image).evaluate().isEmpty; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 25));
+          await tester.pump(const Duration(milliseconds: 50));
+        }
+      });
+
+      expect(find.byType(Image), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 

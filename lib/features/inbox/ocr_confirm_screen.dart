@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -121,11 +122,18 @@ class _OcrConfirmScreenState extends State<OcrConfirmScreen> {
     try {
       final attachments = await repository.getAttachments(itemId);
       if (!_isCurrentLoad(generation, itemId) || attachments.isEmpty) return;
-      final asset = await AssetEntity.fromId(attachments.first.assetId);
-      if (!_isCurrentLoad(generation, itemId) || asset == null) return;
-      final thumb = await asset.thumbnailDataWithSize(
-        const ThumbnailSize(400, 400),
-      );
+      final sourceId = attachments.first.assetId;
+      final Uint8List? thumb;
+      if (sourceId.startsWith('local:')) {
+        final file = File(sourceId.substring('local:'.length));
+        thumb = await file.exists() ? await file.readAsBytes() : null;
+      } else {
+        final asset = await AssetEntity.fromId(sourceId);
+        if (!_isCurrentLoad(generation, itemId) || asset == null) return;
+        thumb = await asset.thumbnailDataWithSize(
+          const ThumbnailSize(400, 400),
+        );
+      }
       if (!_isCurrentLoad(generation, itemId) || thumb == null) return;
       setState(() => _thumb = thumb);
     } catch (_) {
@@ -144,18 +152,14 @@ class _OcrConfirmScreenState extends State<OcrConfirmScreen> {
       firstDate: DateTime(2020),
       lastDate: DateTime(2100),
     );
-    if (date == null ||
-        !mounted ||
-        !_isCurrentOperation(generation, itemId)) {
+    if (date == null || !mounted || !_isCurrentOperation(generation, itemId)) {
       return;
     }
     final time = await showTimePicker(
       context: context,
       initialTime: TimeOfDay.fromDateTime(_startAt ?? DateTime.now()),
     );
-    if (time == null ||
-        !mounted ||
-        !_isCurrentOperation(generation, itemId)) {
+    if (time == null || !mounted || !_isCurrentOperation(generation, itemId)) {
       return;
     }
     setState(() {

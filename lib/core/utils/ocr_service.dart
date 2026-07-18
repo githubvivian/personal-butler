@@ -1,5 +1,11 @@
+import 'dart:io';
+
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:photo_manager/photo_manager.dart';
+
+class OcrSourceUnavailableException implements Exception {
+  const OcrSourceUnavailableException();
+}
 
 class OcrService {
   OcrService._();
@@ -13,13 +19,22 @@ class OcrService {
   }
 
   Future<String> recognizeAsset(String assetId) async {
-    final asset = await AssetEntity.fromId(assetId);
-    if (asset == null) return '';
-    final file = await asset.file;
-    if (file == null) return '';
+    final file = await _resolveFile(assetId);
+    if (file == null) throw const OcrSourceUnavailableException();
     final input = InputImage.fromFilePath(file.path);
     final result = await recognizer.processImage(input);
     return result.text;
+  }
+
+  Future<File?> _resolveFile(String sourceId) async {
+    if (sourceId.startsWith('local:')) {
+      final path = sourceId.substring('local:'.length);
+      if (path.isEmpty) return null;
+      final file = File(path);
+      return await file.exists() ? file : null;
+    }
+    final asset = await AssetEntity.fromId(sourceId);
+    return asset?.file;
   }
 
   void dispose() {
