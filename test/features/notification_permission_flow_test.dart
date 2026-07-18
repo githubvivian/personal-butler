@@ -109,6 +109,91 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('CreateItem ignores a rapid duplicate save tap', (tester) async {
+    final repository = _SpyItemRepository();
+    repository.onSave = (_) async {
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+    };
+    final router = GoRouter(
+      initialLocation: '/host',
+      routes: [
+        GoRoute(
+          path: '/host',
+          builder: (_, _) => const Scaffold(body: Text('host')),
+        ),
+        GoRoute(
+          path: '/create',
+          builder: (_, _) => CreateItemScreen(
+            itemRepository: repository,
+            notificationPermissionCoordinator:
+                NotificationPermissionCoordinator(
+                  requestPermission: () async => true,
+                ),
+          ),
+        ),
+      ],
+    );
+    addTearDown(router.dispose);
+
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    router.push('/create');
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, '连点测试');
+    await _scrollToCreateSave(tester);
+    final save = find.byKey(const Key('create-save'));
+    await tester.tap(save);
+    await tester.pump(const Duration(milliseconds: 10));
+    await tester.tap(save);
+    await tester.pumpAndSettle();
+
+    expect(repository.saved, hasLength(1));
+    expect(find.text('host'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('CreateItem reports save failures and re-enables the button', (
+    tester,
+  ) async {
+    final repository = _SpyItemRepository()
+      ..onSave = (_) async => throw StateError('private persistence failure');
+    final router = GoRouter(
+      initialLocation: '/host',
+      routes: [
+        GoRoute(
+          path: '/host',
+          builder: (_, _) => const Scaffold(body: Text('host')),
+        ),
+        GoRoute(
+          path: '/create',
+          builder: (_, _) => CreateItemScreen(
+            itemRepository: repository,
+            notificationPermissionCoordinator:
+                NotificationPermissionCoordinator(
+                  requestPermission: () async => true,
+                ),
+          ),
+        ),
+      ],
+    );
+    addTearDown(router.dispose);
+
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    router.push('/create');
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, '失败重试测试');
+    await _scrollToCreateSave(tester);
+    await tester.tap(find.byKey(const Key('create-save')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('保存失败，请重试'), findsOneWidget);
+    final button = tester.widget<FilledButton>(
+      find.byKey(const Key('create-save')),
+    );
+    expect(button.onPressed, isNotNull);
+    expect(find.text('host'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('CreateItem does not request for an untimed non-pending item', (
     tester,
   ) async {
@@ -408,11 +493,15 @@ void main() {
 }
 
 Future<void> _tapCreateSave(WidgetTester tester) async {
+  await _scrollToCreateSave(tester);
+  await tester.tap(find.byKey(const Key('create-save')));
+}
+
+Future<void> _scrollToCreateSave(WidgetTester tester) async {
   final scrollable = find.byType(Scrollable).first;
   await tester.scrollUntilVisible(find.text('保存'), 250, scrollable: scrollable);
   await tester.drag(scrollable, const Offset(0, -80));
   await tester.pumpAndSettle();
-  await tester.tap(find.widgetWithText(FilledButton, '保存'));
 }
 
 class _SpyItemRepository extends ItemRepository {

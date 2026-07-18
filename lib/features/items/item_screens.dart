@@ -34,6 +34,7 @@ class _CreateItemScreenState extends State<CreateItemScreen> {
   String _owner = AppConstants.ownerSelf;
   DateTime? _startAt;
   int _reminderMinutes = 60;
+  bool _saving = false;
 
   @override
   void dispose() {
@@ -63,39 +64,48 @@ class _CreateItemScreenState extends State<CreateItemScreen> {
   }
 
   Future<void> _save() async {
+    if (_saving) return;
     if (_title.text.trim().isEmpty) {
       snack(context, '请输入标题');
       return;
     }
-    final isPending = isPendingItemType(_type);
-    final now = DateTime.now();
-    final item = ItemModel(
-      id: _uuid.v4(),
-      type: _type,
-      title: _title.text.trim(),
-      owner: _owner,
-      startAt: _startAt,
-      location: _location.text.trim().isEmpty ? null : _location.text.trim(),
-      notes: _notes.text.trim().isEmpty ? null : _notes.text.trim(),
-      amount: double.tryParse(_amount.text.trim()),
-      inboxStatus: 'confirmed',
-      pendingStatus: isPending ? 'submitted' : null,
-      nextFollowUpAt: isPending ? now.add(const Duration(days: 7)) : null,
-      reminderMinutes: _reminderMinutes,
-      createdAt: now,
-      updatedAt: now,
-    );
-    final repository = widget.itemRepository ?? context.read<AppState>().items;
-    final permissionResult =
-        await (widget.notificationPermissionCoordinator ??
-                NotificationPermissionCoordinator.instance)
-            .requestThenPersist(
-              requiresPermission: itemHasActiveReminder(item),
-              persist: () => repository.save(item),
-            );
-    if (!mounted) return;
-    snack(context, permissionResult.warningMessage ?? '已保存');
-    context.pop();
+    setState(() => _saving = true);
+    try {
+      final isPending = isPendingItemType(_type);
+      final now = DateTime.now();
+      final item = ItemModel(
+        id: _uuid.v4(),
+        type: _type,
+        title: _title.text.trim(),
+        owner: _owner,
+        startAt: _startAt,
+        location: _location.text.trim().isEmpty ? null : _location.text.trim(),
+        notes: _notes.text.trim().isEmpty ? null : _notes.text.trim(),
+        amount: double.tryParse(_amount.text.trim()),
+        inboxStatus: 'confirmed',
+        pendingStatus: isPending ? 'submitted' : null,
+        nextFollowUpAt: isPending ? now.add(const Duration(days: 7)) : null,
+        reminderMinutes: _reminderMinutes,
+        createdAt: now,
+        updatedAt: now,
+      );
+      final repository =
+          widget.itemRepository ?? context.read<AppState>().items;
+      final permissionResult =
+          await (widget.notificationPermissionCoordinator ??
+                  NotificationPermissionCoordinator.instance)
+              .requestThenPersist(
+                requiresPermission: itemHasActiveReminder(item),
+                persist: () => repository.save(item),
+              );
+      if (!mounted) return;
+      snack(context, permissionResult.warningMessage ?? '已保存');
+      context.pop();
+    } catch (_) {
+      if (mounted) snack(context, '保存失败，请重试');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   @override
@@ -163,7 +173,17 @@ class _CreateItemScreenState extends State<CreateItemScreen> {
             onChanged: (v) => setState(() => _reminderMinutes = v ?? 60),
           ),
           const SizedBox(height: 24),
-          FilledButton(onPressed: _save, child: const Text('保存')),
+          FilledButton(
+            key: const Key('create-save'),
+            onPressed: _saving ? null : _save,
+            child: _saving
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('保存'),
+          ),
         ],
       ),
     );
