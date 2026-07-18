@@ -13,12 +13,12 @@ import 'package:personal_butler/features/settings/settings_screen.dart';
 import 'package:provider/provider.dart';
 
 const _safeFailureMessage = '无法打开系统通知设置，请手动前往应用设置';
-const _exactAlarmTitle = '提高会议提醒准点性';
-const _exactAlarmSubtitle = '进入系统精确闹钟授权，帮助会议提醒更准时';
-const _exactAlarmSuccessMessage = '精确闹钟权限已开启，会议提醒已重新同步';
-const _exactAlarmDeniedMessage = '未获得精确闹钟权限，会议提醒仍将使用普通模式';
+const _exactAlarmTitle = '提高提醒准点性';
+const _exactAlarmSubtitle = '进入系统精确闹钟授权，帮助事项和生日提醒更准时';
+const _exactAlarmSuccessMessage = '精确闹钟权限已开启，事项和生日提醒已重新同步';
+const _exactAlarmDeniedMessage = '未获得精确闹钟权限，事项和生日提醒仍将使用普通模式';
 const _exactAlarmRequestFailureMessage = '无法请求精确闹钟权限，请稍后重试';
-const _exactAlarmReconcileFailureMessage = '权限已开启，但会议提醒重新同步失败，请稍后重试';
+const _exactAlarmReconcileFailureMessage = '权限已开启，但事项和生日提醒重新同步失败，请稍后重试';
 const _lockFailureMessage = '会话已锁定，但安全清理未完成，请稍后重试';
 
 void main() {

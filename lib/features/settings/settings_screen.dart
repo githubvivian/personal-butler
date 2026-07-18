@@ -235,9 +235,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             _menuTile(
               Icons.alarm_on_outlined,
-              '提高会议提醒准点性',
+              '提高提醒准点性',
               _requestExactAlarmPermission,
-              subtitle: '进入系统精确闹钟授权，帮助会议提醒更准时',
+              subtitle: '进入系统精确闹钟授权，帮助事项和生日提醒更准时',
             ),
             _menuTile(Icons.security, '隐私与安全', () => _showPrivacy()),
             const SizedBox(height: 12),
@@ -339,7 +339,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     if (granted != true) {
       if (!mounted) return;
-      snack(context, '未获得精确闹钟权限，会议提醒仍将使用普通模式');
+      snack(context, '未获得精确闹钟权限，事项和生日提醒仍将使用普通模式');
       return;
     }
 
@@ -347,12 +347,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await reconciler(items: appState.items, birthdays: appState.birthdays);
     } catch (_) {
       if (!mounted) return;
-      snack(context, '权限已开启，但会议提醒重新同步失败，请稍后重试');
+      snack(context, '权限已开启，但事项和生日提醒重新同步失败，请稍后重试');
       return;
     }
 
     if (!mounted) return;
-    snack(context, '精确闹钟权限已开启，会议提醒已重新同步');
+    snack(context, '精确闹钟权限已开启，事项和生日提醒已重新同步');
   }
 
   Widget _miniStat(String label, String value) {
