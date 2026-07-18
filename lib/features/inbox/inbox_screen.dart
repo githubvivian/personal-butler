@@ -19,11 +19,13 @@ class InboxScreen extends StatefulWidget {
     this.assetChooser,
     this.recognizer,
     this.itemRepository,
+    this.ocrTimeout = OcrService.defaultOperationTimeout,
   });
 
   final OcrAssetChooser? assetChooser;
   final OcrRecognizer? recognizer;
   final ItemRepository? itemRepository;
+  final Duration ocrTimeout;
 
   @override
   State<InboxScreen> createState() => _InboxScreenState();
@@ -141,7 +143,13 @@ class _InboxScreenState extends State<InboxScreen> {
       try {
         final recognizer =
             widget.recognizer ?? OcrService.instance.recognizeAsset;
-        text = await recognizer(assetId);
+        text = await recognizer(assetId).timeout(
+          widget.ocrTimeout,
+          onTimeout: () => throw const OcrTimeoutException(),
+        );
+      } on OcrTimeoutException {
+        _showOcrMessage('文字识别超时，请重试');
+        return;
       } catch (_) {
         _showOcrMessage('文字识别失败，请重试');
         return;

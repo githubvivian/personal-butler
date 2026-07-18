@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:photo_manager/photo_manager.dart';
 
@@ -7,12 +8,37 @@ class OcrSourceUnavailableException implements Exception {
   const OcrSourceUnavailableException();
 }
 
+class OcrTimeoutException implements Exception {
+  const OcrTimeoutException();
+}
+
 class OcrService {
-  OcrService._();
+  OcrService._({
+    this.operationTimeout = defaultOperationTimeout,
+    this.cleanupTimeout = defaultCleanupTimeout,
+  });
+
+  @visibleForTesting
+  OcrService.forTesting({
+    required Duration operationTimeout,
+    Duration cleanupTimeout = defaultCleanupTimeout,
+  }) : this._(
+         operationTimeout: operationTimeout,
+         cleanupTimeout: cleanupTimeout,
+       );
+
   static final OcrService instance = OcrService._();
+  static const defaultOperationTimeout = Duration(seconds: 45);
+  static const defaultCleanupTimeout = Duration(seconds: 5);
+
+  final Duration operationTimeout;
+  final Duration cleanupTimeout;
 
   Future<String> recognizeAsset(String assetId) async {
-    final file = await _resolveFile(assetId);
+    final file = await _resolveFile(assetId).timeout(
+      operationTimeout,
+      onTimeout: () => throw const OcrTimeoutException(),
+    );
     if (file == null) throw const OcrSourceUnavailableException();
     final input = InputImage.fromFilePath(file.path);
     // ML Kit keeps a native recognizer (and its language model) alive until
@@ -20,13 +46,18 @@ class OcrService {
     // release that memory on devices with tighter background limits.
     final recognizer = TextRecognizer(script: TextRecognitionScript.chinese);
     try {
-      final result = await recognizer.processImage(input);
+      final result = await recognizer
+          .processImage(input)
+          .timeout(
+            operationTimeout,
+            onTimeout: () => throw const OcrTimeoutException(),
+          );
       return result.text;
     } finally {
       // Cleanup must not turn a successful recognition into a user-visible
       // failure if the platform channel is already shutting down.
       try {
-        await recognizer.close();
+        await recognizer.close().timeout(cleanupTimeout);
       } catch (_) {}
     }
   }

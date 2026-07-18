@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
@@ -80,6 +81,57 @@ void main() {
     );
 
     expect(text, '仍然可用');
+  });
+
+  test('recognition timeout closes its native recognizer', () async {
+    final calls = <MethodCall>[];
+    final recognition = Completer<Object?>();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_ocrChannel, (call) async {
+          calls.add(call);
+          if (call.method == 'vision#startTextRecognizer') {
+            return recognition.future;
+          }
+          return null;
+        });
+    final source = await _temporarySource();
+    addTearDown(() => source.parent.delete(recursive: true));
+    final service = OcrService.forTesting(
+      operationTimeout: const Duration(milliseconds: 10),
+      cleanupTimeout: const Duration(milliseconds: 10),
+    );
+
+    await expectLater(
+      service.recognizeAsset('local:${source.path}'),
+      throwsA(isA<OcrTimeoutException>()),
+    );
+
+    expect(calls.map((call) => call.method), [
+      'vision#startTextRecognizer',
+      'vision#closeTextRecognizer',
+    ]);
+    expect(_recognizerId(calls[1]), _recognizerId(calls[0]));
+  });
+
+  test('cleanup timeout does not discard successful OCR text', () async {
+    final cleanup = Completer<Object?>();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_ocrChannel, (call) async {
+          if (call.method == 'vision#startTextRecognizer') {
+            return <String, Object?>{'text': '清理超时仍然可用', 'blocks': <Object?>[]};
+          }
+          return cleanup.future;
+        });
+    final source = await _temporarySource();
+    addTearDown(() => source.parent.delete(recursive: true));
+    final service = OcrService.forTesting(
+      operationTimeout: const Duration(milliseconds: 20),
+      cleanupTimeout: const Duration(milliseconds: 10),
+    );
+
+    final text = await service.recognizeAsset('local:${source.path}');
+
+    expect(text, '清理超时仍然可用');
   });
 
   test('concurrent requests use and close independent recognizers', () async {

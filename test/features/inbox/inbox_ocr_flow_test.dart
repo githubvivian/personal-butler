@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:personal_butler/core/models/models.dart';
 import 'package:personal_butler/core/repositories/item_repository.dart';
+import 'package:personal_butler/core/utils/ocr_service.dart';
 import 'package:personal_butler/features/inbox/inbox_screen.dart';
 
 void main() {
@@ -65,6 +66,34 @@ void main() {
     expect(repository.createDraftCalls, 0);
     expect(repository.addAttachmentCalls, 0);
     expect(harness.router.routeInformationProvider.value.uri.path, '/inbox');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('OCR timeout removes the loader and releases retry actions', (
+    tester,
+  ) async {
+    final repository = _SpyItemRepository();
+    final recognition = Completer<String>();
+    await _pumpInbox(
+      tester,
+      repository: repository,
+      assetChooser: () async => 'asset-timeout',
+      recognizer: (_) => recognition.future,
+      ocrTimeout: const Duration(seconds: 1),
+    );
+
+    await tester.tap(find.text('截图导入'));
+    await tester.pump();
+    expect(find.byKey(const Key('inbox-ocr-loading')), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 2));
+    await _pumpFrames(tester);
+
+    expect(find.byKey(const Key('inbox-ocr-loading')), findsNothing);
+    expect(find.text('文字识别超时，请重试'), findsOneWidget);
+    expect(_actionInkWell(tester, '截图导入').onTap, isNotNull);
+    expect(_actionInkWell(tester, '拍照识图').onTap, isNotNull);
+    expect(repository.atomicCalls, 0);
     expect(tester.takeException(), isNull);
   });
 
@@ -286,12 +315,14 @@ Future<_InboxHarness> _pumpInbox(
   required _SpyItemRepository repository,
   required Future<String?> Function() assetChooser,
   required Future<String> Function(String assetId) recognizer,
+  Duration ocrTimeout = OcrService.defaultOperationTimeout,
 }) async {
   final harness = _InboxHarness(
     screen: InboxScreen(
       itemRepository: repository,
       assetChooser: assetChooser,
       recognizer: recognizer,
+      ocrTimeout: ocrTimeout,
     ),
   );
   addTearDown(harness.dispose);
