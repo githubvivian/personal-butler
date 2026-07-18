@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:personal_butler/core/services/notification_service.dart';
+import 'package:personal_butler/core/services/notification_navigation_controller.dart';
 
 const _notificationChannel = MethodChannel(
   'dexterous.com/flutter/local_notifications',
@@ -19,6 +20,7 @@ void main() {
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(_notificationChannel, null);
     messenger.setMockMethodCallHandler(_timezoneChannel, null);
+    NotificationNavigationController.instance.clear();
   });
 
   group('scheduleExactAlarmWithPermissionFallback', () {
@@ -133,6 +135,40 @@ void main() {
 
       await service.init();
       expect(initializeCalls, 2);
+    },
+  );
+
+  test(
+    'captures a cold-start notification destination during initialization',
+    () async {
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(_timezoneChannel, (_) async {
+        return 'Asia/Shanghai';
+      });
+      messenger.setMockMethodCallHandler(_notificationChannel, (call) async {
+        if (call.method == 'initialize') return true;
+        if (call.method == 'getNotificationAppLaunchDetails') {
+          return <String, Object?>{
+            'notificationLaunchedApp': true,
+            'notificationResponse': <String, Object?>{
+              'notificationId': 1,
+              'actionId': null,
+              'input': null,
+              'payload': '/item/cold-start-item',
+              'notificationResponseType': 0,
+            },
+          };
+        }
+        return null;
+      });
+
+      await NotificationService.forTesting().init();
+
+      expect(
+        NotificationNavigationController.instance.takePendingLocation(),
+        '/item/cold-start-item',
+      );
     },
   );
 

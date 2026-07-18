@@ -5,6 +5,8 @@ import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
+import 'notification_navigation_controller.dart';
+
 Future<void> scheduleExactAlarmWithPermissionFallback(
   Future<void> Function(AndroidScheduleMode mode) schedule,
 ) async {
@@ -63,7 +65,25 @@ class NotificationService {
 
     const android = AndroidInitializationSettings('@mipmap/ic_launcher');
     const settings = InitializationSettings(android: android);
-    await _plugin.initialize(settings);
+    await _plugin.initialize(
+      settings,
+      onDidReceiveNotificationResponse: (response) {
+        NotificationNavigationController.instance.acceptPayload(
+          response.payload,
+        );
+      },
+    );
+    try {
+      final launchDetails = await _plugin.getNotificationAppLaunchDetails();
+      if (launchDetails?.didNotificationLaunchApp == true) {
+        NotificationNavigationController.instance.acceptPayload(
+          launchDetails?.notificationResponse?.payload,
+        );
+      }
+    } catch (_) {
+      // Launch details are optional on vendor Android implementations. A
+      // normal startup must not fail merely because they are unavailable.
+    }
 
     const channelStrong = AndroidNotificationChannel(
       'personal_butler_reminders',
@@ -110,6 +130,22 @@ class NotificationService {
     required String title,
     required String body,
     required DateTime when,
+  }) {
+    return scheduleItemReminderWithPayload(
+      id: id,
+      title: title,
+      body: body,
+      when: when,
+      payload: null,
+    );
+  }
+
+  Future<void> scheduleItemReminderWithPayload({
+    required int id,
+    required String title,
+    required String body,
+    required DateTime when,
+    required String? payload,
   }) async {
     if (!_ready) await init();
     if (!when.isAfter(DateTime.now())) return;
@@ -127,11 +163,14 @@ class NotificationService {
             channelDescription: '会议、生日当天等强提醒',
             importance: Importance.high,
             priority: Priority.high,
+            visibility: NotificationVisibility.private,
+            category: AndroidNotificationCategory.reminder,
           ),
         ),
         androidScheduleMode: androidScheduleMode,
         uiLocalNotificationDateInterpretation:
             UILocalNotificationDateInterpretation.absoluteTime,
+        payload: payload,
       ),
     );
   }
@@ -141,6 +180,22 @@ class NotificationService {
     required String title,
     required String body,
     required DateTime when,
+  }) {
+    return scheduleWeakReminderWithPayload(
+      id: id,
+      title: title,
+      body: body,
+      when: when,
+      payload: null,
+    );
+  }
+
+  Future<void> scheduleWeakReminderWithPayload({
+    required int id,
+    required String title,
+    required String body,
+    required DateTime when,
+    required String? payload,
   }) async {
     if (!_ready) await init();
     if (!when.isAfter(DateTime.now())) return;
@@ -157,11 +212,14 @@ class NotificationService {
           channelDescription: '悬而未决、生日临近等弱提醒',
           importance: Importance.defaultImportance,
           priority: Priority.defaultPriority,
+          visibility: NotificationVisibility.private,
+          category: AndroidNotificationCategory.reminder,
         ),
       ),
       androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
       uiLocalNotificationDateInterpretation:
           UILocalNotificationDateInterpretation.absoluteTime,
+      payload: payload,
     );
   }
 

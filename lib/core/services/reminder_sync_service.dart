@@ -15,6 +15,15 @@ typedef ReminderScheduleAction =
       required DateTime when,
     });
 
+typedef ReminderScheduleActionWithPayload =
+    Future<void> Function({
+      required int id,
+      required String title,
+      required String body,
+      required DateTime when,
+      required String? payload,
+    });
+
 typedef NotificationIdQuery = Future<Set<int>> Function();
 
 /// 启动时重排所有本地提醒（会议、悬停关注、生日）
@@ -25,6 +34,8 @@ class ReminderSyncService {
     NotificationIdQuery? activeNotificationIds,
     ReminderScheduleAction? scheduleItemReminder,
     ReminderScheduleAction? scheduleWeakReminder,
+    ReminderScheduleActionWithPayload? scheduleItemReminderWithPayload,
+    ReminderScheduleActionWithPayload? scheduleWeakReminderWithPayload,
     DateTime Function()? now,
   }) : _cancelNotification =
            cancelNotification ?? NotificationService.instance.cancel,
@@ -40,6 +51,14 @@ class ReminderSyncService {
        _scheduleWeakReminder =
            scheduleWeakReminder ??
            NotificationService.instance.scheduleWeakReminder,
+       _scheduleItemReminderWithPayload = scheduleItemReminder == null
+           ? (scheduleItemReminderWithPayload ??
+                 NotificationService.instance.scheduleItemReminderWithPayload)
+           : scheduleItemReminderWithPayload,
+       _scheduleWeakReminderWithPayload = scheduleWeakReminder == null
+           ? (scheduleWeakReminderWithPayload ??
+                 NotificationService.instance.scheduleWeakReminderWithPayload)
+           : scheduleWeakReminderWithPayload,
        _now = now ?? DateTime.now;
 
   ReminderSyncService._() : this();
@@ -50,6 +69,8 @@ class ReminderSyncService {
   final NotificationIdQuery _activeNotificationIds;
   final ReminderScheduleAction _scheduleItemReminder;
   final ReminderScheduleAction _scheduleWeakReminder;
+  final ReminderScheduleActionWithPayload? _scheduleItemReminderWithPayload;
+  final ReminderScheduleActionWithPayload? _scheduleWeakReminderWithPayload;
   final DateTime Function() _now;
 
   static const int notificationIdVersion = 1;
@@ -104,6 +125,8 @@ class ReminderSyncService {
               body: item.location ?? '日程提醒',
               when: when,
               schedule: _scheduleItemReminder,
+              scheduleWithPayload: _scheduleItemReminderWithPayload,
+              payload: '/item/${Uri.encodeComponent(item.id)}',
             ),
           );
         }
@@ -119,6 +142,8 @@ class ReminderSyncService {
             body: '悬而未决事项到了关注时间，点击查看进展',
             when: item.nextFollowUpAt!,
             schedule: _scheduleWeakReminder,
+            scheduleWithPayload: _scheduleWeakReminderWithPayload,
+            payload: '/item/${Uri.encodeComponent(item.id)}',
           ),
         );
       }
@@ -139,6 +164,8 @@ class ReminderSyncService {
             body: '${birthday.name} 的生日还有 ${birthday.remindDaysBefore} 天',
             when: advance,
             schedule: _scheduleWeakReminder,
+            scheduleWithPayload: _scheduleWeakReminderWithPayload,
+            payload: '/birthdays',
           ),
         );
       }
@@ -150,6 +177,8 @@ class ReminderSyncService {
             body: '今天是 ${birthday.name} 的生日',
             when: remindAt,
             schedule: _scheduleItemReminder,
+            scheduleWithPayload: _scheduleItemReminderWithPayload,
+            payload: '/birthdays',
           ),
         );
       }
@@ -187,12 +216,23 @@ class ReminderSyncService {
     }
     for (final plan in plans) {
       try {
-        await plan.schedule(
-          id: plan.id,
-          title: plan.title,
-          body: plan.body,
-          when: plan.when,
-        );
+        final scheduleWithPayload = plan.scheduleWithPayload;
+        if (scheduleWithPayload != null) {
+          await scheduleWithPayload(
+            id: plan.id,
+            title: plan.title,
+            body: plan.body,
+            when: plan.when,
+            payload: plan.payload,
+          );
+        } else {
+          await plan.schedule(
+            id: plan.id,
+            title: plan.title,
+            body: plan.body,
+            when: plan.when,
+          );
+        }
       } catch (error, stackTrace) {
         rememberError(error, stackTrace);
       }
@@ -218,11 +258,12 @@ class ReminderSyncService {
         Duration(minutes: item.reminderMinutes),
       );
       actions.add(
-        () => _scheduleItemReminder(
+        () => _scheduleItem(
           id: itemId(item.id),
           title: item.title,
           body: item.location ?? '日程提醒',
           when: when,
+          payload: '/item/${Uri.encodeComponent(item.id)}',
         ),
       );
     }
@@ -231,11 +272,12 @@ class ReminderSyncService {
         item.status != 'done' &&
         item.nextFollowUpAt != null) {
       actions.add(
-        () => _scheduleWeakReminder(
+        () => _scheduleWeak(
           id: pendingId(item.id),
           title: '关注：${item.title}',
           body: '悬而未决事项到了关注时间，点击查看进展',
           when: item.nextFollowUpAt!,
+          payload: '/item/${Uri.encodeComponent(item.id)}',
         ),
       );
     }
@@ -263,21 +305,23 @@ class ReminderSyncService {
 
     if (advance.isAfter(now)) {
       actions.add(
-        () => _scheduleWeakReminder(
+        () => _scheduleWeak(
           id: birthdayAdvanceId(b.id),
           title: '生日临近',
           body: '${b.name} 的生日还有 ${b.remindDaysBefore} 天',
           when: advance,
+          payload: '/birthdays',
         ),
       );
     }
     if (remindAt.isAfter(now)) {
       actions.add(
-        () => _scheduleItemReminder(
+        () => _scheduleItem(
           id: birthdayDayId(b.id),
           title: '生日快乐',
           body: '今天是 ${b.name} 的生日',
           when: remindAt,
+          payload: '/birthdays',
         ),
       );
     }
@@ -298,6 +342,46 @@ class ReminderSyncService {
     );
     if (occurrence == null) return null;
     return DateTime(occurrence.year, occurrence.month, occurrence.day, 9);
+  }
+
+  Future<void> _scheduleItem({
+    required int id,
+    required String title,
+    required String body,
+    required DateTime when,
+    required String payload,
+  }) {
+    final withPayload = _scheduleItemReminderWithPayload;
+    if (withPayload != null) {
+      return withPayload(
+        id: id,
+        title: title,
+        body: body,
+        when: when,
+        payload: payload,
+      );
+    }
+    return _scheduleItemReminder(id: id, title: title, body: body, when: when);
+  }
+
+  Future<void> _scheduleWeak({
+    required int id,
+    required String title,
+    required String body,
+    required DateTime when,
+    required String payload,
+  }) {
+    final withPayload = _scheduleWeakReminderWithPayload;
+    if (withPayload != null) {
+      return withPayload(
+        id: id,
+        title: title,
+        body: body,
+        when: when,
+        payload: payload,
+      );
+    }
+    return _scheduleWeakReminder(id: id, title: title, body: body, when: when);
   }
 }
 
@@ -326,6 +410,8 @@ class _ReminderPlan {
     required this.body,
     required this.when,
     required this.schedule,
+    this.scheduleWithPayload,
+    required this.payload,
   });
 
   final int id;
@@ -333,4 +419,6 @@ class _ReminderPlan {
   final String body;
   final DateTime when;
   final ReminderScheduleAction schedule;
+  final ReminderScheduleActionWithPayload? scheduleWithPayload;
+  final String payload;
 }

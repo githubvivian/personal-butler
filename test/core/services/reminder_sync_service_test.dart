@@ -705,6 +705,73 @@ void main() {
     expect(weak.values.every((when) => when.isAfter(now)), isTrue);
   });
 
+  test(
+    'reconcileAll supplies safe destinations for notification taps',
+    () async {
+      final now = DateTime(2026, 7, 15, 8);
+      final item = _pendingItem(
+        id: 'tap-item',
+        startAt: now.add(const Duration(days: 1)),
+        nextFollowUpAt: now.add(const Duration(hours: 2)),
+      );
+      final birthday = BirthdayModel(
+        id: 'tap-birthday',
+        name: 'Birthday',
+        isLunar: false,
+        month: 7,
+        day: 20,
+        remindDaysBefore: 1,
+        createdAt: now,
+      );
+      final payloads = <int, String?>{};
+      final service = ReminderSyncService(
+        now: () => now,
+        cancelNotification: (_) async {},
+        pendingNotificationIds: () async => <int>{},
+        activeNotificationIds: () async => <int>{},
+        scheduleItemReminderWithPayload:
+            ({
+              required int id,
+              required String title,
+              required String body,
+              required DateTime when,
+              required String? payload,
+            }) async {
+              payloads[id] = payload;
+            },
+        scheduleWeakReminderWithPayload:
+            ({
+              required int id,
+              required String title,
+              required String body,
+              required DateTime when,
+              required String? payload,
+            }) async {
+              payloads[id] = payload;
+            },
+      );
+
+      await service.reconcileAll(
+        items: _ItemRepository([item]),
+        birthdays: _BirthdayRepository([birthday]),
+      );
+
+      expect(payloads[ReminderSyncService.itemId(item.id)], '/item/tap-item');
+      expect(
+        payloads[ReminderSyncService.pendingId(item.id)],
+        '/item/tap-item',
+      );
+      expect(
+        payloads[ReminderSyncService.birthdayAdvanceId(birthday.id)],
+        '/birthdays',
+      );
+      expect(
+        payloads[ReminderSyncService.birthdayDayId(birthday.id)],
+        '/birthdays',
+      );
+    },
+  );
+
   test('reconcileAll handles empty repositories without permission', () async {
     final notificationMethods = <String>[];
     final cancelled = <int>[];
