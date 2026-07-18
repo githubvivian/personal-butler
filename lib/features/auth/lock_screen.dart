@@ -21,24 +21,27 @@ class _LockScreenState extends State<LockScreen> {
   }
 
   Future<void> _tryUnlock() async {
+    if (!mounted || _busy) return;
     final app = context.read<AppState>();
-    if (!app.initialized) {
-      setState(() => _busy = true);
-      final ok = await app.setupFirstRun();
+    final initialized = app.initialized;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final ok = initialized ? await app.unlock() : await app.setupFirstRun();
       if (!mounted) return;
       setState(() {
         _busy = false;
-        _error = ok ? null : '初始化失败，请重试';
+        _error = ok ? null : (initialized ? '验证失败，请重试' : '初始化失败，请重试');
       });
-      return;
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = initialized ? '验证失败，请重试' : '初始化失败，请重试';
+      });
     }
-    setState(() => _busy = true);
-    final ok = await app.unlock();
-    if (!mounted) return;
-    setState(() {
-      _busy = false;
-      _error = ok ? null : '验证失败，请重试';
-    });
   }
 
   @override
