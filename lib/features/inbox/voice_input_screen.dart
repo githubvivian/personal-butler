@@ -134,11 +134,14 @@ class _VoiceInputScreenState extends State<VoiceInputScreen> {
           setState(() => _text.text = words);
           if (isFinal) _completePendingFinalResult(generation);
         },
+        onSessionEnded: () => _handleSessionEnded(generation),
+        onSessionError: () => _handleSessionError(generation),
       );
       if (!mounted || generation != _listenGeneration) {
         await _stopIgnoringErrors();
         return;
       }
+      if (_phase != _SpeechPhase.starting) return;
       setState(() => _phase = _SpeechPhase.listening);
     } catch (_) {
       if (!mounted || generation != _listenGeneration) {
@@ -151,6 +154,30 @@ class _VoiceInputScreenState extends State<VoiceInputScreen> {
         _error = '启动语音识别失败，请重试';
       });
     }
+  }
+
+  void _handleSessionEnded(int generation) {
+    if (!mounted || generation != _listenGeneration) return;
+    if (_phase != _SpeechPhase.starting && _phase != _SpeechPhase.listening) {
+      return;
+    }
+    _releasePendingFinalResult(generation);
+    setState(() {
+      _phase = _SpeechPhase.idle;
+      _error = null;
+    });
+  }
+
+  void _handleSessionError(int generation) {
+    if (!mounted || generation != _listenGeneration) return;
+    if (_phase != _SpeechPhase.starting && _phase != _SpeechPhase.listening) {
+      return;
+    }
+    _releasePendingFinalResult(generation);
+    setState(() {
+      _phase = _SpeechPhase.idle;
+      _error = '语音识别发生错误，请检查麦克风权限或网络后重试';
+    });
   }
 
   Future<bool> _stopBeforeSave() async {

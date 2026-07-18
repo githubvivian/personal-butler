@@ -249,6 +249,77 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('automatic speech session end returns controls to idle', (
+    tester,
+  ) async {
+    final speech = _FakeSpeechInput();
+    await _pumpVoice(tester, speech: speech);
+    await _startListening(tester);
+
+    speech.sessionEndedCallbacks.single();
+    await tester.pump();
+
+    expect(find.byIcon(Icons.mic), findsOneWidget);
+    expect(_toggle(tester).onTap, isNotNull);
+    expect(_ideaButton(tester).onPressed, isNotNull);
+    expect(_itemButton(tester).onPressed, isNotNull);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('speech session errors are sanitized and retryable', (
+    tester,
+  ) async {
+    final speech = _FakeSpeechInput();
+    await _pumpVoice(tester, speech: speech);
+    await _startListening(tester);
+
+    speech.sessionErrorCallbacks.single();
+    await tester.pump();
+
+    expect(find.byIcon(Icons.mic), findsOneWidget);
+    expect(find.text('语音识别发生错误，请检查麦克风权限或网络后重试'), findsOneWidget);
+    expect(_toggle(tester).onTap, isNotNull);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a later completion does not erase a speech error', (
+    tester,
+  ) async {
+    final speech = _FakeSpeechInput();
+    await _pumpVoice(tester, speech: speech);
+    await _startListening(tester);
+
+    speech.sessionErrorCallbacks.single();
+    await tester.pump();
+    speech.sessionEndedCallbacks.single();
+    await tester.pump();
+
+    expect(find.text('语音识别发生错误，请检查麦克风权限或网络后重试'), findsOneWidget);
+    expect(find.byIcon(Icons.mic), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('old speech lifecycle callbacks are ignored by a new session', (
+    tester,
+  ) async {
+    final speech = _FakeSpeechInput();
+    await _pumpVoice(tester, speech: speech);
+    await _startListening(tester);
+    final oldEnded = speech.sessionEndedCallbacks.single;
+    final oldError = speech.sessionErrorCallbacks.single;
+
+    await tester.tap(find.byIcon(Icons.stop));
+    await _pumpFrames(tester);
+    await _startListening(tester);
+    oldEnded();
+    oldError();
+    await tester.pump();
+
+    expect(find.byIcon(Icons.stop), findsOneWidget);
+    expect(find.text('语音识别发生错误，请检查麦克风权限或网络后重试'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('stop failure is sanitized and restores a retryable session', (
     tester,
   ) async {
@@ -659,6 +730,8 @@ class _FakeSpeechInput implements SpeechInput {
   int startCalls = 0;
   int stopCalls = 0;
   final callbacks = <SpeechTextCallback>[];
+  final sessionEndedCallbacks = <SpeechSessionCallback>[];
+  final sessionErrorCallbacks = <SpeechSessionCallback>[];
   final startOwners = <Object>[];
   final stopOwners = <Object>[];
 
@@ -678,10 +751,14 @@ class _FakeSpeechInput implements SpeechInput {
   Future<void> startListening({
     required Object sessionOwner,
     required SpeechTextCallback onText,
+    SpeechSessionCallback? onSessionEnded,
+    SpeechSessionCallback? onSessionError,
   }) {
     startCalls++;
     startOwners.add(sessionOwner);
     callbacks.add(onText);
+    sessionEndedCallbacks.add(onSessionEnded ?? () {});
+    sessionErrorCallbacks.add(onSessionError ?? () {});
     return startHandler(sessionOwner, onText);
   }
 
