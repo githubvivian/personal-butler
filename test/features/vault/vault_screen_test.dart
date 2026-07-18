@@ -615,6 +615,76 @@ void main() {
     },
   );
 
+  testWidgets('empty vault name preserves the draft and can be corrected', (
+    tester,
+  ) async {
+    final capability = await _authenticateVault(session);
+    final controller = _unlockedController(capability);
+    ({String name, String account, String password, String? notes})? saved;
+    final repository = _FakeVaultRepository(
+      saveHandler:
+          ({
+            required capability,
+            id,
+            required category,
+            required name,
+            required account,
+            required password,
+            notes,
+          }) async {
+            saved = (
+              name: name,
+              account: account,
+              password: password,
+              notes: notes,
+            );
+          },
+    );
+
+    await tester.pumpWidget(_app(controller, repository));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('vault_add')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).at(1), 'person@example.com');
+    await tester.enterText(
+      find.byKey(const Key('vault_password_field')),
+      'private-password',
+    );
+
+    await tester.tap(find.byKey(const Key('vault_dialog_save')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('vault_add_dialog')), findsOneWidget);
+    expect(find.text('请输入名称'), findsOneWidget);
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('vault_password_field')))
+          .controller
+          ?.text,
+      'private-password',
+    );
+    expect(repository.saveCalls, 0);
+
+    await tester.enterText(
+      find.byKey(const Key('vault_name_field')),
+      '  Primary account  ',
+    );
+    await tester.tap(find.byKey(const Key('vault_dialog_save')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('vault_add_dialog')), findsNothing);
+    expect(repository.saveCalls, 1);
+    expect(saved, (
+      name: 'Primary account',
+      account: 'person@example.com',
+      password: 'private-password',
+      notes: null,
+    ));
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.dispose();
+  });
+
   testWidgets('expiry while the add dialog is open prevents saving', (
     tester,
   ) async {

@@ -266,6 +266,7 @@ class _VaultScreenState extends State<VaultScreen> {
     String? accountValue;
     String? passwordValue;
     String? notesValue;
+    String? errorText;
 
     try {
       confirmed = await showDialog<bool>(
@@ -314,6 +315,16 @@ class _VaultScreenState extends State<VaultScreen> {
                       controller: notes,
                       decoration: const InputDecoration(labelText: '备注'),
                     ),
+                    if (errorText != null) ...[
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          errorText!,
+                          style: const TextStyle(color: AppColors.danger),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -324,7 +335,13 @@ class _VaultScreenState extends State<VaultScreen> {
                 ),
                 FilledButton(
                   key: const Key('vault_dialog_save'),
-                  onPressed: () => Navigator.pop(context, true),
+                  onPressed: () {
+                    if (name.text.trim().isEmpty) {
+                      setLocal(() => errorText = '请输入名称');
+                      return;
+                    }
+                    Navigator.pop(context, true);
+                  },
                   child: const Text('保存'),
                 ),
               ],
