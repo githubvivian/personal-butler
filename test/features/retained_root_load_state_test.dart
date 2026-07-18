@@ -121,6 +121,38 @@ void main() {
     expect(find.text('new-day'), findsOneWidget);
   });
 
+  testWidgets('Calendar uses Chinese labels and retains a paged month', (
+    tester,
+  ) async {
+    final repository = _ScriptedItemRepository()
+      ..calendarResults.addAll([
+        Future.value(<ItemModel>[]),
+        Future.value(<ItemModel>[]),
+      ]);
+    final appState = _TestAppState(repository);
+
+    await tester.pumpWidget(_provided(appState, const CalendarScreen()));
+    await tester.pumpAndSettle();
+
+    var calendar = tester.widget<TableCalendar<dynamic>>(
+      find.byType(TableCalendar),
+    );
+    expect(calendar.locale, 'zh_CN');
+
+    final initial = calendar.focusedDay;
+    final nextMonth = DateTime(initial.year, initial.month + 1, 1);
+    calendar.onPageChanged!(nextMonth);
+    repository.commitMutation();
+    await tester.pumpAndSettle();
+
+    calendar = tester.widget<TableCalendar<dynamic>>(
+      find.byType(TableCalendar),
+    );
+    expect(calendar.focusedDay.year, nextMonth.year);
+    expect(calendar.focusedDay.month, nextMonth.month);
+    expect(calendar.locale, 'zh_CN');
+  });
+
   testWidgets('Pending clears the previous tab and exposes retry on failure', (
     tester,
   ) async {

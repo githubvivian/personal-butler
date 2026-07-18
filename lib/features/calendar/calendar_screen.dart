@@ -98,9 +98,11 @@ class _CalendarScreenState extends State<CalendarScreen> {
             firstDay: DateTime(2020),
             lastDay: DateTime(2100),
             focusedDay: _focused,
+            locale: 'zh_CN',
             selectedDayPredicate: (d) => isSameDay(d, _selected),
             calendarFormat: _format,
             onFormatChanged: (f) => setState(() => _format = f),
+            onPageChanged: (focusedDay) => _focused = focusedDay,
             onDaySelected: (s, f) {
               setState(() {
                 _selected = s;
