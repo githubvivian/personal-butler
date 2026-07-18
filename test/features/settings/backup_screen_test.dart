@@ -128,6 +128,35 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('committed restore warns when reminder reconciliation failed', (
+    tester,
+  ) async {
+    final appState = _TrackingAppState();
+    var itemInvalidations = 0;
+    appState.items.addListener(() => itemInvalidations += 1);
+    final backupService = _ControlledImportBackupService(
+      outcome: BackupImportOutcome.importedWithReminderSyncFailure,
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<AppState>.value(
+        value: appState,
+        child: MaterialApp(home: BackupScreen(backupService: backupService)),
+      ),
+    );
+    await tester.enterText(find.byType(TextField), 'secret1');
+    await tester.tap(find.text('从备份恢复'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('继续'));
+    await tester.pumpAndSettle();
+
+    expect(itemInvalidations, 1);
+    expect(appState.refreshCount, 1);
+    expect(find.text('数据库记录已恢复，但事项和生日提醒重新同步失败，请稍后重试'), findsOneWidget);
+    expect(find.textContaining('恢复失败，请检查'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'committed restore invalidates data after the backup screen is disposed',
     (tester) async {
@@ -197,12 +226,15 @@ class _ControlledBackupService extends BackupService {
 }
 
 class _ControlledImportBackupService extends BackupService {
+  _ControlledImportBackupService({this.outcome = BackupImportOutcome.imported});
+
+  final BackupImportOutcome outcome;
   int imports = 0;
 
   @override
   Future<BackupImportOutcome> importEncryptedBackup(String password) async {
     imports += 1;
-    return BackupImportOutcome.imported;
+    return outcome;
   }
 }
 

@@ -81,7 +81,11 @@ class _BackupScreenState extends State<BackupScreen> {
       appState.items.invalidateAfterExternalWrite();
       appState.refresh();
       if (!mounted) return;
-      snack(context, '数据库记录已恢复；请核对保险库和相册引用');
+      if (outcome == BackupImportOutcome.importedWithReminderSyncFailure) {
+        snack(context, '数据库记录已恢复，但事项和生日提醒重新同步失败，请稍后重试');
+      } else {
+        snack(context, '数据库记录已恢复；请核对保险库和相册引用');
+      }
     } catch (e) {
       if (!mounted) return;
       snack(context, '恢复失败，请检查密码与文件');

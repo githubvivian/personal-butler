@@ -235,22 +235,25 @@ void main() {
     expect(events, ['replace', 'reconcile']);
   });
 
-  test('returns imported when reminder reconciliation fails', () async {
-    await _selectEncryptedPayload(_validPayload());
-    var replaceCompleted = false;
+  test(
+    'reports a committed import whose reminder reconciliation failed',
+    () async {
+      await _selectEncryptedPayload(_validPayload());
+      var replaceCompleted = false;
 
-    final outcome = await BackupService(
-      replaceAllData: (_) async {
-        replaceCompleted = true;
-      },
-      reconcileReminders: () async {
-        throw StateError('notification side effect failed');
-      },
-    ).importEncryptedBackup(_backupPassword);
+      final outcome = await BackupService(
+        replaceAllData: (_) async {
+          replaceCompleted = true;
+        },
+        reconcileReminders: () async {
+          throw StateError('notification side effect failed');
+        },
+      ).importEncryptedBackup(_backupPassword);
 
-    expect(outcome, BackupImportOutcome.imported);
-    expect(replaceCompleted, isTrue);
-  });
+      expect(outcome, BackupImportOutcome.importedWithReminderSyncFailure);
+      expect(replaceCompleted, isTrue);
+    },
+  );
 
   test('propagates replace failure without reconciling reminders', () async {
     await _selectEncryptedPayload(_validPayload());

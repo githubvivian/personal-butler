@@ -9,7 +9,11 @@ import '../repositories/other_repositories.dart';
 import '../security/encryption_service.dart';
 import 'reminder_sync_service.dart';
 
-enum BackupImportOutcome { imported, cancelled }
+enum BackupImportOutcome {
+  imported,
+  importedWithReminderSyncFailure,
+  cancelled,
+}
 
 class BackupImportSelectionException implements Exception {
   const BackupImportSelectionException(this.message);
@@ -88,7 +92,9 @@ class BackupService {
     await _replaceAllData(data);
     try {
       await _reconcileReminders();
-    } catch (_) {}
+    } catch (_) {
+      return BackupImportOutcome.importedWithReminderSyncFailure;
+    }
     return BackupImportOutcome.imported;
   }
 
