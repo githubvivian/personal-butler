@@ -1,8 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:personal_butler/core/database/database_schema.dart';
 import 'package:personal_butler/core/models/models.dart';
 import 'package:personal_butler/core/repositories/item_repository.dart';
+import 'package:personal_butler/core/services/notification_permission_coordinator.dart';
 import 'package:personal_butler/core/services/reminder_sync_service.dart';
+import 'package:personal_butler/features/pending/pending_screen.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() {
@@ -249,6 +253,33 @@ void main() {
       expect(changes, 1);
     });
 
+    test('save does not revive an existing tombstone', () async {
+      final item = _buildItem('item-stale-save-after-delete');
+      var syncCount = 0;
+      final saveRepository = ItemRepository(
+        databaseProvider: () async => database,
+        syncItemReminder: (_) async => syncCount += 1,
+        cancelNotification: (_) async {},
+      );
+      await database.insert('items', item.toMap());
+      await saveRepository.softDelete(item.id);
+
+      await expectLater(
+        saveRepository.save(item.copyWith(title: 'Stale edit')),
+        throwsA(isA<StateError>()),
+      );
+
+      final rows = await database.query(
+        'items',
+        where: 'id = ?',
+        whereArgs: [item.id],
+      );
+      expect(rows, hasLength(1));
+      expect(rows.single['is_deleted'], 1);
+      expect(rows.single['title'], item.title);
+      expect(syncCount, 0);
+    });
+
     test('save rethrows database failures without syncing reminders', () async {
       var syncCount = 0;
       final item = _buildItem('item-save-db-failure');
@@ -440,6 +471,228 @@ void main() {
         );
         expect(cancelledIds, isEmpty);
         expect(changes, 0);
+      },
+    );
+  });
+
+  group('PendingReminderActions atomic mutations', () {
+    test(
+      'concurrent postpone and status updates preserve both changes and fresh fields',
+      () async {
+        final staleItem = _buildItem('item-concurrent-pending-actions');
+        await database.insert('items', staleItem.toMap());
+        await database.update(
+          'items',
+          {
+            'title': 'Fresh database title',
+            'updated_at': DateTime.utc(2026, 7, 16).toIso8601String(),
+          },
+          where: 'id = ?',
+          whereArgs: [staleItem.id],
+        );
+        final actions = PendingReminderActions(
+          itemRepository: repository,
+          notificationPermissionCoordinator: NotificationPermissionCoordinator(
+            requestPermission: () async => true,
+          ),
+        );
+
+        await Future.wait([
+          actions.postpone(staleItem),
+          actions.updateStatus(staleItem, 'done'),
+        ]);
+
+        final rows = await database.query(
+          'items',
+          where: 'id = ?',
+          whereArgs: [staleItem.id],
+        );
+        final saved = ItemModel.fromMap(rows.single);
+        expect(saved.nextFollowUpAt, isNot(staleItem.nextFollowUpAt));
+        expect(saved.status, 'done');
+        expect(saved.pendingStatus, 'done');
+        expect(saved.title, 'Fresh database title');
+        expect(saved.description, staleItem.description);
+        expect(saved.notes, staleItem.notes);
+      },
+    );
+
+    test('serializes reminder sync side effects for the same item', () async {
+      final staleItem = _buildItem('item-serialized-pending-reminders');
+      final firstSyncStarted = Completer<void>();
+      final releaseFirstSync = Completer<void>();
+      final secondSyncStarted = Completer<void>();
+      final syncedItems = <ItemModel>[];
+      final actionRepository = ItemRepository(
+        databaseProvider: () async => database,
+        syncItemReminder: (item) async {
+          syncedItems.add(item);
+          if (syncedItems.length == 1) {
+            firstSyncStarted.complete();
+            await releaseFirstSync.future;
+          } else {
+            secondSyncStarted.complete();
+          }
+        },
+        cancelNotification: (_) async {},
+      );
+      await database.insert('items', staleItem.toMap());
+      final actions = PendingReminderActions(
+        itemRepository: actionRepository,
+        notificationPermissionCoordinator: NotificationPermissionCoordinator(
+          requestPermission: () async => true,
+        ),
+      );
+
+      final postpone = actions.postpone(staleItem);
+      await firstSyncStarted.future;
+      final updateStatus = actions.updateStatus(staleItem, 'done');
+      final secondStartedBeforeRelease = await Future.any<bool>([
+        secondSyncStarted.future.then((_) => true),
+        Future<bool>.delayed(const Duration(milliseconds: 30), () => false),
+      ]);
+      releaseFirstSync.complete();
+      await Future.wait([postpone, updateStatus]);
+
+      expect(secondStartedBeforeRelease, isFalse);
+      expect(syncedItems, hasLength(2));
+      expect(syncedItems.last.status, 'done');
+      expect(syncedItems.last.nextFollowUpAt, isNot(staleItem.nextFollowUpAt));
+    });
+
+    test('queues soft delete behind an in-flight reminder sync', () async {
+      final staleItem = _buildItem('item-delete-after-blocked-sync');
+      final syncStarted = Completer<void>();
+      final releaseSync = Completer<void>();
+      final firstCancelStarted = Completer<void>();
+      final events = <String>[];
+      final actionRepository = ItemRepository(
+        databaseProvider: () async => database,
+        syncItemReminder: (_) async {
+          events.add('sync-start');
+          syncStarted.complete();
+          await releaseSync.future;
+          events.add('sync-end');
+        },
+        cancelNotification: (notificationId) async {
+          events.add('cancel:$notificationId');
+          if (!firstCancelStarted.isCompleted) firstCancelStarted.complete();
+        },
+      );
+      await database.insert('items', staleItem.toMap());
+      final actions = PendingReminderActions(
+        itemRepository: actionRepository,
+        notificationPermissionCoordinator: NotificationPermissionCoordinator(
+          requestPermission: () async => true,
+        ),
+      );
+
+      final postpone = actions.postpone(staleItem);
+      await syncStarted.future;
+      final delete = actionRepository.softDelete(staleItem.id);
+      final cancelStartedBeforeRelease = await Future.any<bool>([
+        firstCancelStarted.future.then((_) => true),
+        Future<bool>.delayed(const Duration(milliseconds: 30), () => false),
+      ]);
+      final beforeRelease = await database.query(
+        'items',
+        where: 'id = ?',
+        whereArgs: [staleItem.id],
+      );
+      releaseSync.complete();
+      await Future.wait([postpone, delete]);
+      final afterDelete = await database.query(
+        'items',
+        where: 'id = ?',
+        whereArgs: [staleItem.id],
+      );
+
+      expect(cancelStartedBeforeRelease, isFalse);
+      expect(beforeRelease.single['is_deleted'], 0);
+      expect(afterDelete.single['is_deleted'], 1);
+      expect(events, [
+        'sync-start',
+        'sync-end',
+        'cancel:${ReminderSyncService.itemId(staleItem.id)}',
+        'cancel:${ReminderSyncService.pendingId(staleItem.id)}',
+      ]);
+    });
+
+    test(
+      'deleted target causes no permission request, write, or sync',
+      () async {
+        final staleItem = _buildItem('item-deleted-pending-action');
+        var requests = 0;
+        var syncCount = 0;
+        final actionRepository = ItemRepository(
+          databaseProvider: () async => database,
+          syncItemReminder: (_) async => syncCount += 1,
+          cancelNotification: (_) async {},
+        );
+        await database.insert('items', staleItem.toMap());
+        await actionRepository.softDelete(staleItem.id);
+        final actions = PendingReminderActions(
+          itemRepository: actionRepository,
+          notificationPermissionCoordinator: NotificationPermissionCoordinator(
+            requestPermission: () async {
+              requests += 1;
+              return true;
+            },
+          ),
+        );
+
+        final result = await actions.postpone(staleItem);
+
+        final rows = await database.query(
+          'items',
+          where: 'id = ?',
+          whereArgs: [staleItem.id],
+        );
+        expect(result, NotificationPermissionResult.notRequired);
+        expect(requests, 0);
+        expect(syncCount, 0);
+        expect(rows.single['is_deleted'], 1);
+        expect(
+          rows.single['next_follow_up_at'],
+          staleItem.nextFollowUpAt!.toIso8601String(),
+        );
+      },
+    );
+
+    test(
+      'missing target causes no permission request, insert, or sync',
+      () async {
+        final staleItem = _buildItem('item-missing-pending-action');
+        var requests = 0;
+        var syncCount = 0;
+        final actionRepository = ItemRepository(
+          databaseProvider: () async => database,
+          syncItemReminder: (_) async => syncCount += 1,
+          cancelNotification: (_) async {},
+        );
+        final actions = PendingReminderActions(
+          itemRepository: actionRepository,
+          notificationPermissionCoordinator: NotificationPermissionCoordinator(
+            requestPermission: () async {
+              requests += 1;
+              return true;
+            },
+          ),
+        );
+
+        final result = await actions.updateStatus(staleItem, 'reviewing');
+
+        expect(result, NotificationPermissionResult.notRequired);
+        expect(requests, 0);
+        expect(syncCount, 0);
+        expect(
+          await database.query(
+            'items',
+            where: 'id = ?',
+            whereArgs: [staleItem.id],
+          ),
+          isEmpty,
+        );
       },
     );
   });

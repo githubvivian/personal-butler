@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 import 'package:uuid/uuid.dart';
@@ -21,6 +23,7 @@ class ItemRepository extends ChangeNotifier {
   final Future<Database> Function() _databaseProvider;
   final Future<void> Function(ItemModel) _syncItemReminder;
   final Future<void> Function(int) _cancelNotification;
+  final Map<String, Future<void>> _itemMutationTails = {};
 
   static Future<Database> _defaultDatabaseProvider() {
     return DatabaseHelper.instance.database;
@@ -115,17 +118,82 @@ class ItemRepository extends ChangeNotifier {
     return rows.map(ItemModel.fromMap).toList();
   }
 
-  Future<void> save(ItemModel item) async {
-    final db = await _databaseProvider();
-    await db.insert(
-      'items',
-      item.toMap(),
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
-    notifyListeners();
-    try {
-      await _syncItemReminder(item);
-    } catch (_) {}
+  Future<void> save(ItemModel item) {
+    return _serializeItemMutation(item.id, () async {
+      final db = await _databaseProvider();
+      await db.transaction((txn) async {
+        final existing = await txn.query(
+          'items',
+          columns: ['is_deleted'],
+          where: 'id = ?',
+          whereArgs: [item.id],
+        );
+        if (existing.isEmpty) {
+          await txn.insert('items', item.toMap());
+          return;
+        }
+        if ((existing.single['is_deleted'] as int? ?? 0) == 1) {
+          throw StateError('Cannot save an item that has been deleted.');
+        }
+        final changed = await txn.update(
+          'items',
+          item.toMap(),
+          where: 'id = ? AND is_deleted = 0',
+          whereArgs: [item.id],
+        );
+        if (changed == 0) {
+          throw StateError('Cannot save an item that has been deleted.');
+        }
+      });
+      notifyListeners();
+      await _syncReminderBestEffort(item);
+    });
+  }
+
+  Future<ItemModel?> updatePendingFollowUp(String id, DateTime nextFollowUpAt) {
+    return _updateActiveItemFields(id, {
+      'next_follow_up_at': nextFollowUpAt.toIso8601String(),
+    });
+  }
+
+  Future<ItemModel?> updatePendingStatus(
+    String id, {
+    required String pendingStatus,
+    required String status,
+  }) {
+    return _updateActiveItemFields(id, {
+      'pending_status': pendingStatus,
+      'status': status,
+    });
+  }
+
+  Future<ItemModel?> _updateActiveItemFields(
+    String id,
+    Map<String, Object?> fields,
+  ) {
+    return _serializeItemMutation(id, () async {
+      final db = await _databaseProvider();
+      final updated = await db.transaction<ItemModel?>((txn) async {
+        final changed = await txn.update(
+          'items',
+          {...fields, 'updated_at': DateTime.now().toIso8601String()},
+          where: 'id = ? AND is_deleted = 0',
+          whereArgs: [id],
+        );
+        if (changed == 0) return null;
+        final rows = await txn.query(
+          'items',
+          where: 'id = ? AND is_deleted = 0',
+          whereArgs: [id],
+        );
+        if (rows.isEmpty) return null;
+        return ItemModel.fromMap(rows.single);
+      });
+      if (updated == null) return null;
+      notifyListeners();
+      await _syncReminderBestEffort(updated);
+      return updated;
+    });
   }
 
   Future<ItemModel> createDraft({
@@ -199,28 +267,57 @@ class ItemRepository extends ChangeNotifier {
     return item;
   }
 
-  Future<void> softDelete(String id) async {
-    final db = await _databaseProvider();
-    final changed = await db.update(
-      'items',
-      {'is_deleted': 1, 'updated_at': DateTime.now().toIso8601String()},
-      where: 'id = ?',
-      whereArgs: [id],
-    );
-    if (changed > 0) notifyListeners();
-    await _cancelBestEffort(ReminderSyncService.itemId(id));
-    await _cancelBestEffort(ReminderSyncService.pendingId(id));
+  Future<void> softDelete(String id) {
+    return _serializeItemMutation(id, () async {
+      final db = await _databaseProvider();
+      final changed = await db.update(
+        'items',
+        {'is_deleted': 1, 'updated_at': DateTime.now().toIso8601String()},
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      if (changed > 0) notifyListeners();
+      await _cancelBestEffort(ReminderSyncService.itemId(id));
+      await _cancelBestEffort(ReminderSyncService.pendingId(id));
+    });
   }
 
-  Future<void> hardDelete(String id) async {
-    final db = await _databaseProvider();
-    final changed = await db.transaction((txn) async {
-      await txn.delete('attachments', where: 'item_id = ?', whereArgs: [id]);
-      return txn.delete('items', where: 'id = ?', whereArgs: [id]);
+  Future<void> hardDelete(String id) {
+    return _serializeItemMutation(id, () async {
+      final db = await _databaseProvider();
+      final changed = await db.transaction((txn) async {
+        await txn.delete('attachments', where: 'item_id = ?', whereArgs: [id]);
+        return txn.delete('items', where: 'id = ?', whereArgs: [id]);
+      });
+      if (changed > 0) notifyListeners();
+      await _cancelBestEffort(ReminderSyncService.itemId(id));
+      await _cancelBestEffort(ReminderSyncService.pendingId(id));
     });
-    if (changed > 0) notifyListeners();
-    await _cancelBestEffort(ReminderSyncService.itemId(id));
-    await _cancelBestEffort(ReminderSyncService.pendingId(id));
+  }
+
+  Future<T> _serializeItemMutation<T>(
+    String id,
+    Future<T> Function() mutation,
+  ) async {
+    final previous = _itemMutationTails[id] ?? Future<void>.value();
+    final completer = Completer<void>();
+    final tail = completer.future;
+    _itemMutationTails[id] = tail;
+    await previous;
+    try {
+      return await mutation();
+    } finally {
+      completer.complete();
+      if (identical(_itemMutationTails[id], tail)) {
+        _itemMutationTails.remove(id);
+      }
+    }
+  }
+
+  Future<void> _syncReminderBestEffort(ItemModel item) async {
+    try {
+      await _syncItemReminder(item);
+    } catch (_) {}
   }
 
   Future<void> _cancelBestEffort(int notificationId) async {

@@ -42,30 +42,36 @@ class PendingReminderActions {
   final ItemRepository itemRepository;
   final NotificationPermissionCoordinator notificationPermissionCoordinator;
 
-  Future<NotificationPermissionResult> postpone(ItemModel item) {
-    return _persist(
-      item.copyWith(
-        nextFollowUpAt: DateTime.now().add(const Duration(days: 7)),
-      ),
+  Future<NotificationPermissionResult> postpone(ItemModel item) async {
+    final current = await itemRepository.getById(item.id);
+    if (current == null) return NotificationPermissionResult.notRequired;
+    final nextFollowUpAt = DateTime.now().add(const Duration(days: 7));
+    final updated = current.copyWith(nextFollowUpAt: nextFollowUpAt);
+    return notificationPermissionCoordinator.requestThenPersist(
+      requiresPermission: itemHasActiveReminder(updated),
+      persist: () async {
+        await itemRepository.updatePendingFollowUp(item.id, nextFollowUpAt);
+      },
     );
   }
 
   Future<NotificationPermissionResult> updateStatus(
     ItemModel item,
     String selected,
-  ) {
-    return _persist(
-      item.copyWith(
-        pendingStatus: selected,
-        status: selected == 'done' ? 'done' : 'active',
-      ),
-    );
-  }
-
-  Future<NotificationPermissionResult> _persist(ItemModel item) {
+  ) async {
+    final current = await itemRepository.getById(item.id);
+    if (current == null) return NotificationPermissionResult.notRequired;
+    final status = selected == 'done' ? 'done' : 'active';
+    final updated = current.copyWith(pendingStatus: selected, status: status);
     return notificationPermissionCoordinator.requestThenPersist(
-      requiresPermission: itemHasActiveReminder(item),
-      persist: () => itemRepository.save(item),
+      requiresPermission: itemHasActiveReminder(updated),
+      persist: () async {
+        await itemRepository.updatePendingStatus(
+          item.id,
+          pendingStatus: selected,
+          status: status,
+        );
+      },
     );
   }
 }

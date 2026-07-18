@@ -157,7 +157,8 @@ void main() {
   test(
     'Pending postpone requests permission and persists when denied',
     () async {
-      final repository = _SpyItemRepository();
+      final item = _activePendingItem();
+      final repository = _SpyItemRepository(itemById: item);
       var requests = 0;
       final coordinator = NotificationPermissionCoordinator(
         requestPermission: () async {
@@ -170,7 +171,7 @@ void main() {
         notificationPermissionCoordinator: coordinator,
       );
 
-      final result = await actions.postpone(_activePendingItem());
+      final result = await actions.postpone(item);
 
       expect(result, NotificationPermissionResult.denied);
       expect(requests, 1);
@@ -180,7 +181,8 @@ void main() {
   );
 
   test('Pending marking done does not request permission', () async {
-    final repository = _SpyItemRepository();
+    final item = _activePendingItem();
+    final repository = _SpyItemRepository(itemById: item);
     var requests = 0;
     final actions = PendingReminderActions(
       itemRepository: repository,
@@ -192,7 +194,7 @@ void main() {
       ),
     );
 
-    final result = await actions.updateStatus(_activePendingItem(), 'done');
+    final result = await actions.updateStatus(item, 'done');
 
     expect(result, NotificationPermissionResult.notRequired);
     expect(requests, 0);
@@ -200,7 +202,8 @@ void main() {
   });
 
   test('Pending restoring a done item requests and marks it active', () async {
-    final repository = _SpyItemRepository();
+    final item = _activePendingItem(status: 'done', pendingStatus: 'done');
+    final repository = _SpyItemRepository(itemById: item);
     var requests = 0;
     final coordinator = NotificationPermissionCoordinator(
       requestPermission: () async {
@@ -213,10 +216,7 @@ void main() {
       notificationPermissionCoordinator: coordinator,
     );
 
-    final result = await actions.updateStatus(
-      _activePendingItem(status: 'done', pendingStatus: 'done'),
-      'reviewing',
-    );
+    final result = await actions.updateStatus(item, 'reviewing');
 
     expect(result, NotificationPermissionResult.granted);
     expect(requests, 1);
@@ -371,7 +371,7 @@ class _SpyItemRepository extends ItemRepository {
   _SpyItemRepository({this.itemById, List<ItemModel>? pendingItems})
     : pendingItems = pendingItems ?? [];
 
-  final ItemModel? itemById;
+  ItemModel? itemById;
   final List<ItemModel> pendingItems;
   final List<ItemModel> saved = [];
   Future<void> Function(ItemModel)? onSave;
@@ -379,13 +379,57 @@ class _SpyItemRepository extends ItemRepository {
 
   @override
   Future<void> save(ItemModel item) async {
-    saved.add(item);
-    await onSave?.call(item);
-    notifyListeners();
+    await _recordMutation(item);
   }
 
   @override
-  Future<ItemModel?> getById(String id) async => itemById;
+  Future<ItemModel?> getById(String id) async {
+    final currentItem = itemById;
+    if (currentItem?.id == id) return currentItem;
+    for (final item in pendingItems) {
+      if (item.id == id) return item;
+    }
+    return null;
+  }
+
+  @override
+  Future<ItemModel?> updatePendingFollowUp(
+    String id,
+    DateTime nextFollowUpAt,
+  ) async {
+    final current = await getById(id);
+    if (current == null) return null;
+    final updated = current.copyWith(nextFollowUpAt: nextFollowUpAt);
+    await _recordMutation(updated);
+    return updated;
+  }
+
+  @override
+  Future<ItemModel?> updatePendingStatus(
+    String id, {
+    required String pendingStatus,
+    required String status,
+  }) async {
+    final current = await getById(id);
+    if (current == null) return null;
+    final updated = current.copyWith(
+      pendingStatus: pendingStatus,
+      status: status,
+    );
+    await _recordMutation(updated);
+    return updated;
+  }
+
+  Future<void> _recordMutation(ItemModel item) async {
+    saved.add(item);
+    itemById = item;
+    final index = pendingItems.indexWhere(
+      (candidate) => candidate.id == item.id,
+    );
+    if (index >= 0) pendingItems[index] = item;
+    await onSave?.call(item);
+    notifyListeners();
+  }
 
   @override
   Future<List<AttachmentModel>> getAttachments(String itemId) async => [];
