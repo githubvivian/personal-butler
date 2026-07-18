@@ -37,6 +37,7 @@ class _OcrConfirmScreenState extends State<OcrConfirmScreen> {
   DateTime? _startAt;
   String _type = 'meeting';
   Uint8List? _thumb;
+  String? _localPreviewPath;
   String? _loadedItemId;
   _OcrConfirmLoadState _loadState = _OcrConfirmLoadState.loading;
   bool _saving = false;
@@ -69,6 +70,7 @@ class _OcrConfirmScreenState extends State<OcrConfirmScreen> {
       _type = 'meeting';
       _startAt = null;
       _thumb = null;
+      _localPreviewPath = null;
       _saving = false;
       _loadState = _OcrConfirmLoadState.loading;
     });
@@ -123,22 +125,33 @@ class _OcrConfirmScreenState extends State<OcrConfirmScreen> {
       final attachments = await repository.getAttachments(itemId);
       if (!_isCurrentLoad(generation, itemId) || attachments.isEmpty) return;
       final sourceId = attachments.first.assetId;
-      final Uint8List? thumb;
       if (sourceId.startsWith('local:')) {
-        final file = File(sourceId.substring('local:'.length));
-        thumb = await file.exists() ? await file.readAsBytes() : null;
-      } else {
-        final asset = await AssetEntity.fromId(sourceId);
-        if (!_isCurrentLoad(generation, itemId) || asset == null) return;
-        thumb = await asset.thumbnailDataWithSize(
-          const ThumbnailSize(400, 400),
-        );
+        final path = sourceId.substring('local:'.length);
+        final exists = path.isNotEmpty && await File(path).exists();
+        if (!_isCurrentLoad(generation, itemId)) return;
+        setState(() {
+          _thumb = null;
+          _localPreviewPath = exists ? path : null;
+        });
+        return;
       }
+
+      final asset = await AssetEntity.fromId(sourceId);
+      if (!_isCurrentLoad(generation, itemId) || asset == null) return;
+      final thumb = await asset.thumbnailDataWithSize(
+        const ThumbnailSize(400, 400),
+      );
       if (!_isCurrentLoad(generation, itemId) || thumb == null) return;
-      setState(() => _thumb = thumb);
+      setState(() {
+        _localPreviewPath = null;
+        _thumb = thumb;
+      });
     } catch (_) {
       if (!_isCurrentLoad(generation, itemId)) return;
-      setState(() => _thumb = null);
+      setState(() {
+        _thumb = null;
+        _localPreviewPath = null;
+      });
     }
   }
 
@@ -276,18 +289,53 @@ class _OcrConfirmScreenState extends State<OcrConfirmScreen> {
   }
 
   Widget _buildReady() {
+    final localPreviewPath = _localPreviewPath;
+    final thumb = _thumb;
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        if (_thumb != null)
+        if (localPreviewPath != null || thumb != null)
           ClipRRect(
             borderRadius: BorderRadius.circular(12),
-            child: Image.memory(
-              _thumb!,
-              height: 160,
-              width: double.infinity,
-              fit: BoxFit.cover,
-            ),
+            child: localPreviewPath != null
+                ? Image.file(
+                    File(localPreviewPath),
+                    height: 160,
+                    width: double.infinity,
+                    cacheHeight: 640,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) => const ColoredBox(
+                      color: AppColors.border,
+                      child: SizedBox(
+                        height: 160,
+                        child: Center(
+                          child: Icon(
+                            Icons.broken_image_outlined,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ),
+                    ),
+                  )
+                : Image.memory(
+                    thumb!,
+                    height: 160,
+                    width: double.infinity,
+                    cacheHeight: 400,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) => const ColoredBox(
+                      color: AppColors.border,
+                      child: SizedBox(
+                        height: 160,
+                        child: Center(
+                          child: Icon(
+                            Icons.broken_image_outlined,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
           ),
         const SizedBox(height: 16),
         DropdownButtonFormField<String>(

@@ -597,6 +597,37 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
+    testWidgets('missing restored local attachment keeps the editor usable', (
+      tester,
+    ) async {
+      final item = _item('ocr-missing-local-preview', ocrText: 'OCR body');
+      final repository = _FakeItemRepository(
+        getByIdResults: [item],
+        attachmentResults: [
+          [
+            AttachmentModel(
+              id: 'attachment-missing',
+              itemId: item.id,
+              assetId:
+                  'local:${Directory.systemTemp.path}\\missing-preview.png',
+              createdAt: DateTime.utc(2026, 7, 15),
+            ),
+          ],
+        ],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: OcrConfirmScreen(itemId: item.id, itemRepository: repository),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text(item.title), findsOneWidget);
+      expect(find.byType(Image), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('confirming after the item disappears does not save or leave', (
       tester,
     ) async {
