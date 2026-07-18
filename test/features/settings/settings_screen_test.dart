@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:personal_butler/core/models/models.dart';
 import 'package:personal_butler/core/providers/app_state.dart';
 import 'package:personal_butler/core/repositories/item_repository.dart';
@@ -118,6 +119,49 @@ void main() {
 
     expect(find.text(_safeFailureMessage), findsOneWidget);
     expect(find.textContaining(sensitiveMarker), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('stats reload after returning from the birthday page', (
+    tester,
+  ) async {
+    final birthdays = _MutableBirthdayRepository();
+    final appState = _SettingsAppState(birthdayRepository: birthdays);
+    final router = GoRouter(
+      initialLocation: '/me',
+      routes: [
+        GoRoute(path: '/me', builder: (_, _) => const SettingsScreen()),
+        GoRoute(
+          path: '/birthdays',
+          builder: (_, _) => const Scaffold(body: Text('birthday page')),
+        ),
+      ],
+    );
+    addTearDown(router.dispose);
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<AppState>.value(
+        value: appState,
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('生日提醒'),
+      200,
+      scrollable: find.byType(Scrollable),
+    );
+
+    await tester.tap(find.text('生日提醒'));
+    await tester.pumpAndSettle();
+    birthdays.count = 1;
+    router.pop();
+    await tester.pumpAndSettle();
+
+    expect(birthdays.getAllCalls, greaterThanOrEqualTo(2));
+    await tester.drag(find.byType(Scrollable), const Offset(0, 2000));
+    await tester.pumpAndSettle();
+    expect(find.text('1'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -475,7 +519,9 @@ class _SettingsAppState extends AppState {
   _SettingsAppState({
     bool initiallyUnlocked = false,
     SessionLockAction? sessionLock,
-  }) : super(
+    BirthdayRepository? birthdayRepository,
+  }) : _birthdayRepository = birthdayRepository ?? _EmptyBirthdayRepository(),
+       super(
          initializeNotifications: () async {},
          readInitialized: () async => initiallyUnlocked,
          validateSession: () async => initiallyUnlocked,
@@ -485,7 +531,7 @@ class _SettingsAppState extends AppState {
 
   final _emptyItems = _EmptyItemRepository();
   final _emptyIdeas = _EmptyIdeaRepository();
-  final _emptyBirthdays = _EmptyBirthdayRepository();
+  final BirthdayRepository _birthdayRepository;
   final _emptySchedules = _EmptyScheduleRepository();
 
   @override
@@ -495,7 +541,7 @@ class _SettingsAppState extends AppState {
   IdeaRepository get ideas => _emptyIdeas;
 
   @override
-  BirthdayRepository get birthdays => _emptyBirthdays;
+  BirthdayRepository get birthdays => _birthdayRepository;
 
   @override
   ScheduleRepository get schedules => _emptySchedules;
@@ -518,6 +564,27 @@ class _EmptyIdeaRepository extends IdeaRepository {
 class _EmptyBirthdayRepository extends BirthdayRepository {
   @override
   Future<List<BirthdayModel>> getAll() async => [];
+}
+
+class _MutableBirthdayRepository extends BirthdayRepository {
+  int count = 0;
+  int getAllCalls = 0;
+
+  @override
+  Future<List<BirthdayModel>> getAll() async {
+    getAllCalls++;
+    return [
+      for (var i = 0; i < count; i++)
+        BirthdayModel(
+          id: 'birthday-$i',
+          name: '测试生日',
+          isLunar: false,
+          month: 1,
+          day: 1,
+          createdAt: DateTime(2026),
+        ),
+    ];
+  }
 }
 
 class _EmptyScheduleRepository extends ScheduleRepository {

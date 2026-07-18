@@ -199,22 +199,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _menuTile(
               Icons.backup_outlined,
               '数据备份与恢复',
-              () => context.push('/backup'),
+              () => _openAndReload('/backup'),
             ),
             _menuTile(
               Icons.lightbulb_outline,
               '灵感库',
-              () => context.push('/ideas'),
+              () => _openAndReload('/ideas'),
             ),
             _menuTile(
               Icons.cake_outlined,
               '生日提醒',
-              () => context.push('/birthdays'),
+              () => _openAndReload('/birthdays'),
             ),
             _menuTile(
               Icons.table_chart,
               '我的课表',
-              () => context.push('/schedule'),
+              () => _openAndReload('/schedule'),
             ),
             _menuTile(
               Icons.settings_outlined,
@@ -290,6 +290,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (!mounted) return;
       snack(context, '会话已锁定，但安全清理未完成，请稍后重试');
     }
+  }
+
+  Future<void> _openAndReload(String location) async {
+    await context.push(location);
+    if (!mounted) return;
+    await _load();
   }
 
   Future<void> _openNotificationSettings() async {
