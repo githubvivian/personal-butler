@@ -204,8 +204,25 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen> {
           child: FutureBuilder<Widget?>(
             future: _thumb(asset),
             builder: (_, snap) {
-              if (!snap.hasData) {
-                return Container(color: AppColors.border);
+              if (snap.connectionState == ConnectionState.waiting) {
+                return Container(
+                  color: AppColors.border,
+                  alignment: Alignment.center,
+                  child: const SizedBox.square(
+                    dimension: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                );
+              }
+              if (snap.hasError || !snap.hasData || snap.data == null) {
+                return Container(
+                  color: AppColors.border,
+                  alignment: Alignment.center,
+                  child: const Icon(
+                    Icons.broken_image_outlined,
+                    color: AppColors.textSecondary,
+                  ),
+                );
               }
               return ClipRRect(
                 borderRadius: BorderRadius.circular(8),
@@ -237,15 +254,24 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen> {
   }
 
   Future<Widget?> _thumb(AssetEntity asset) async {
-    final data = await asset.thumbnailDataWithSize(
-      const ThumbnailSize(200, 200),
-    );
+    final data = await asset
+        .thumbnailDataWithSize(const ThumbnailSize(200, 200))
+        .timeout(const Duration(seconds: 10));
     if (data == null) return null;
     return Image.memory(
       data,
       fit: BoxFit.cover,
       width: double.infinity,
       height: double.infinity,
+      errorBuilder: (_, __, ___) => const ColoredBox(
+        color: AppColors.border,
+        child: Center(
+          child: Icon(
+            Icons.broken_image_outlined,
+            color: AppColors.textSecondary,
+          ),
+        ),
+      ),
     );
   }
 }

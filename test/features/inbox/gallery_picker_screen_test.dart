@@ -350,6 +350,65 @@ void main() {
     expect(find.text('打开相册'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('thumbnail failure shows a visible placeholder', (tester) async {
+    final asset = AssetEntity(
+      id: 'asset-error',
+      typeInt: AssetType.image.index,
+      width: 100,
+      height: 100,
+    );
+    final plugin = _GalleryPhotoManagerPlugin(
+      permissionStates: [PermissionState.authorized],
+      pathResults: [
+        [_allImagesPath],
+      ],
+      assetResults: [
+        [asset],
+      ],
+      thumbnailResults: [_Failure(StateError('private thumbnail token'))],
+    );
+    PhotoManager.withPlugin(plugin);
+
+    await tester.pumpWidget(const MaterialApp(home: GalleryPickerScreen()));
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.broken_image_outlined), findsOneWidget);
+    expect(find.textContaining('private thumbnail token'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('thumbnail timeout shows a visible placeholder', (tester) async {
+    final asset = AssetEntity(
+      id: 'asset-timeout',
+      typeInt: AssetType.image.index,
+      width: 100,
+      height: 100,
+    );
+    final neverCompletes = Completer<Uint8List?>();
+    final plugin = _GalleryPhotoManagerPlugin(
+      permissionStates: [PermissionState.authorized],
+      pathResults: [
+        [_allImagesPath],
+      ],
+      assetResults: [
+        [asset],
+      ],
+      thumbnailResults: [neverCompletes.future],
+    );
+    PhotoManager.withPlugin(plugin);
+
+    await tester.pumpWidget(const MaterialApp(home: GalleryPickerScreen()));
+    await tester.pump();
+    await tester.pump();
+    expect(find.byType(GridView), findsOneWidget);
+    expect(find.byIcon(Icons.broken_image_outlined), findsNothing);
+
+    await tester.pump(const Duration(seconds: 11));
+
+    expect(find.byIcon(Icons.broken_image_outlined), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 final _allImagesPath = AssetPathEntity(
@@ -365,15 +424,18 @@ class _GalleryPhotoManagerPlugin extends PhotoManagerPlugin {
     required List<Object> pathResults,
     List<Object> assetResults = const [],
     List<Object> presentLimitedResults = const [],
+    List<Object> thumbnailResults = const [],
   }) : _permissionStates = List.of(permissionStates),
        _pathResults = List.of(pathResults),
        _assetResults = List.of(assetResults),
-       _presentLimitedResults = List.of(presentLimitedResults);
+       _presentLimitedResults = List.of(presentLimitedResults),
+       _thumbnailResults = List.of(thumbnailResults);
 
   final List<Object> _permissionStates;
   final List<Object> _pathResults;
   final List<Object> _assetResults;
   final List<Object> _presentLimitedResults;
+  final List<Object> _thumbnailResults;
   final List<PermissionRequestOption> permissionOptions = [];
   final List<RequestType> pathTypes = [];
   final List<bool> onlyAllValues = [];
@@ -436,6 +498,9 @@ class _GalleryPhotoManagerPlugin extends PhotoManagerPlugin {
     PMCancelToken? cancelToken,
   }) async {
     thumbnailAssetIds.add(id);
+    if (_thumbnailResults.isNotEmpty) {
+      return _resolve<Uint8List?>(_thumbnailResults.removeAt(0));
+    }
     return null;
   }
 }
