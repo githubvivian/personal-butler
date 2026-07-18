@@ -214,6 +214,7 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
   ItemModel? _item;
   _ItemDetailLoadState _loadState = _ItemDetailLoadState.loading;
   int _loadGeneration = 0;
+  bool _deleting = false;
 
   @override
   void initState() {
@@ -264,26 +265,42 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
     final item = _item;
     final itemId = widget.itemId;
     final generation = _loadGeneration;
-    if (_loadState != _ItemDetailLoadState.ready || item?.id != itemId) return;
-    final repository = widget.itemRepository ?? context.read<AppState>().items;
-    final action = await ConfirmDeleteDialog.show(
-      context,
-      title: '删除事项',
-      message: '移入已删除可保留记录；彻底删除不可恢复。相册原图不会被删除。',
-    );
-    if (action == null ||
-        !_isCurrentLoad(generation, itemId) ||
+    if (_deleting ||
         _loadState != _ItemDetailLoadState.ready ||
-        _item?.id != itemId) {
+        item?.id != itemId) {
       return;
     }
-    if (action == 'hard') {
-      await repository.hardDelete(itemId);
-    } else {
-      await repository.softDelete(itemId);
+    final repository = widget.itemRepository ?? context.read<AppState>().items;
+    setState(() => _deleting = true);
+    try {
+      final action = await ConfirmDeleteDialog.show(
+        context,
+        title: '删除事项',
+        message: '移入已删除可保留记录；彻底删除不可恢复。相册原图不会被删除。',
+      );
+      if (action == null ||
+          !_isCurrentLoad(generation, itemId) ||
+          _loadState != _ItemDetailLoadState.ready ||
+          _item?.id != itemId) {
+        return;
+      }
+      if (action == 'hard') {
+        await repository.hardDelete(itemId);
+      } else {
+        await repository.softDelete(itemId);
+      }
+      if (!mounted || !_isCurrentLoad(generation, itemId)) return;
+      context.pop();
+    } catch (_) {
+      if (!mounted || !_isCurrentLoad(generation, itemId)) return;
+      snack(context, '删除事项失败，请重试');
+    } finally {
+      if (mounted) {
+        setState(() => _deleting = false);
+      } else {
+        _deleting = false;
+      }
     }
-    if (!mounted || !_isCurrentLoad(generation, itemId)) return;
-    context.pop();
   }
 
   @override
@@ -294,7 +311,7 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
         actions: _loadState == _ItemDetailLoadState.ready
             ? [
                 IconButton(
-                  onPressed: _delete,
+                  onPressed: _deleting ? null : _delete,
                   icon: const Icon(Icons.delete_outline),
                 ),
               ]

@@ -131,6 +131,79 @@ void main() {
       },
     );
 
+    testWidgets('delete failure is sanitized and remains retryable', (
+      tester,
+    ) async {
+      const itemId = 'delete-failure';
+      const privateError = 'private delete database path';
+      final repository = _FakeItemRepository(
+        getByIdResults: [_item(itemId)],
+        softDeleteError: StateError(privateError),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ItemDetailScreen(
+            itemId: itemId,
+            itemRepository: repository,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.delete_outline));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('移入已删除'));
+      await tester.pumpAndSettle();
+
+      expect(repository.softDeletedIds, [itemId]);
+      expect(find.text('删除事项失败，请重试'), findsOneWidget);
+      expect(find.textContaining(privateError), findsNothing);
+      expect(find.text('Test item $itemId'), findsOneWidget);
+      expect(
+        tester
+            .widget<IconButton>(
+              find
+                  .ancestor(
+                    of: find.byIcon(Icons.delete_outline),
+                    matching: find.byType(IconButton),
+                  )
+                  .first,
+            )
+            .onPressed,
+        isNotNull,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('same-frame delete taps open only one confirmation', (
+      tester,
+    ) async {
+      const itemId = 'delete-single-flight';
+      final repository = _FakeItemRepository(
+        getByIdResults: [_item(itemId)],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ItemDetailScreen(
+            itemId: itemId,
+            itemRepository: repository,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.delete_outline));
+      await tester.tap(find.byIcon(Icons.delete_outline), warnIfMissed: false);
+      await tester.pumpAndSettle();
+
+      expect(find.text('删除事项'), findsOneWidget);
+      expect(repository.softDeletedIds, isEmpty);
+      expect(repository.hardDeletedIds, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('missing item ends loading with a not-found message', (
       tester,
     ) async {
@@ -743,6 +816,7 @@ class _FakeItemRepository extends ItemRepository {
     List<Object> attachmentResults = const [],
     this.saveGate,
     this.saveError,
+    this.softDeleteError,
   }) : _getByIdResults = List<Object?>.of(getByIdResults),
        _attachmentResults = List<Object>.of(attachmentResults);
 
@@ -750,6 +824,7 @@ class _FakeItemRepository extends ItemRepository {
   final List<Object> _attachmentResults;
   final Completer<void>? saveGate;
   final Object? saveError;
+  final Object? softDeleteError;
   int getByIdCalls = 0;
   int saveCalls = 0;
   final List<String> getByIdCallIds = [];
@@ -792,6 +867,8 @@ class _FakeItemRepository extends ItemRepository {
   @override
   Future<void> softDelete(String id) async {
     softDeletedIds.add(id);
+    final error = softDeleteError;
+    if (error != null) throw error;
   }
 
   @override
