@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:personal_butler/core/models/models.dart';
@@ -132,6 +134,106 @@ void main() {
       'cancel:${ReminderSyncService.itemId(item.id)}',
       'cancel:${ReminderSyncService.pendingId(item.id)}',
       'item:${ReminderSyncService.itemId(item.id)}',
+    ]);
+  });
+
+  test('serializes concurrent reminder mutations', () async {
+    final first = _pendingItem(
+      id: 'serialized-first',
+      startAt: DateTime.now().add(const Duration(days: 1)),
+    );
+    final second = _pendingItem(
+      id: 'serialized-second',
+      startAt: DateTime.now().add(const Duration(days: 2)),
+    );
+    final firstScheduleStarted = Completer<void>();
+    final releaseFirstSchedule = Completer<void>();
+    final events = <String>[];
+    final service = ReminderSyncService(
+      cancelNotification: (id) async => events.add('cancel:$id'),
+      scheduleItemReminder:
+          ({
+            required int id,
+            required String title,
+            required String body,
+            required DateTime when,
+          }) async {
+            events.add('schedule:$id');
+            if (id == ReminderSyncService.itemId(first.id)) {
+              firstScheduleStarted.complete();
+              await releaseFirstSchedule.future;
+            }
+          },
+      scheduleWeakReminder:
+          ({
+            required int id,
+            required String title,
+            required String body,
+            required DateTime when,
+          }) async {},
+    );
+
+    final firstSync = service.syncItem(first);
+    await firstScheduleStarted.future;
+    final secondSync = service.syncItem(second);
+    final secondStartedBeforeRelease = await Future.any<bool>([
+      secondSync.then((_) => true),
+      Future<bool>.delayed(const Duration(milliseconds: 30), () => false),
+    ]);
+
+    expect(secondStartedBeforeRelease, isFalse);
+    releaseFirstSchedule.complete();
+    await Future.wait([firstSync, secondSync]);
+
+    expect(events, [
+      'cancel:${ReminderSyncService.itemId(first.id)}',
+      'cancel:${ReminderSyncService.pendingId(first.id)}',
+      'schedule:${ReminderSyncService.itemId(first.id)}',
+      'cancel:${ReminderSyncService.itemId(second.id)}',
+      'cancel:${ReminderSyncService.pendingId(second.id)}',
+      'schedule:${ReminderSyncService.itemId(second.id)}',
+    ]);
+  });
+
+  test('a failed queued mutation does not strand later work', () async {
+    final first = _pendingItem(
+      id: 'queued-failure-first',
+      startAt: DateTime.now().add(const Duration(days: 1)),
+    );
+    final second = _pendingItem(
+      id: 'queued-failure-second',
+      startAt: DateTime.now().add(const Duration(days: 2)),
+    );
+    final failure = StateError('first queued cancellation failed');
+    final scheduled = <int>[];
+    final service = ReminderSyncService(
+      cancelNotification: (id) async {
+        if (id == ReminderSyncService.itemId(first.id)) throw failure;
+      },
+      scheduleItemReminder:
+          ({
+            required int id,
+            required String title,
+            required String body,
+            required DateTime when,
+          }) async => scheduled.add(id),
+      scheduleWeakReminder:
+          ({
+            required int id,
+            required String title,
+            required String body,
+            required DateTime when,
+          }) async {},
+    );
+
+    final firstSync = service.syncItem(first);
+    final secondSync = service.syncItem(second);
+
+    await expectLater(firstSync, throwsA(same(failure)));
+    await secondSync;
+    expect(scheduled, [
+      ReminderSyncService.itemId(first.id),
+      ReminderSyncService.itemId(second.id),
     ]);
   });
 

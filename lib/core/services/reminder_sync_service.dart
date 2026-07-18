@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import '../models/models.dart';
@@ -72,6 +73,7 @@ class ReminderSyncService {
   final ReminderScheduleActionWithPayload? _scheduleItemReminderWithPayload;
   final ReminderScheduleActionWithPayload? _scheduleWeakReminderWithPayload;
   final DateTime Function() _now;
+  Future<void> _operationTail = Future<void>.value();
 
   static const int notificationIdVersion = 1;
   static const int _payloadMask = 0x07ffffff;
@@ -93,16 +95,30 @@ class ReminderSyncService {
   Future<void> syncAll({
     required ItemRepository items,
     required BirthdayRepository birthdays,
+  }) {
+    return _enqueue(() => _syncAll(items: items, birthdays: birthdays));
+  }
+
+  Future<void> _syncAll({
+    required ItemRepository items,
+    required BirthdayRepository birthdays,
   }) async {
     final allItems = await items.getAllActiveConfirmed();
     final allBirthdays = await birthdays.getAll();
     await _runBestEffort([
-      for (final item in allItems) () => syncItem(item),
-      for (final birthday in allBirthdays) () => syncBirthday(birthday),
+      for (final item in allItems) () => _syncItem(item),
+      for (final birthday in allBirthdays) () => _syncBirthday(birthday),
     ]);
   }
 
   Future<void> reconcileAll({
+    required ItemRepository items,
+    required BirthdayRepository birthdays,
+  }) {
+    return _enqueue(() => _reconcileAll(items: items, birthdays: birthdays));
+  }
+
+  Future<void> _reconcileAll({
     required ItemRepository items,
     required BirthdayRepository birthdays,
   }) async {
@@ -243,7 +259,11 @@ class ReminderSyncService {
     }
   }
 
-  Future<void> syncItem(ItemModel item) async {
+  Future<void> syncItem(ItemModel item) {
+    return _enqueue(() => _syncItem(item));
+  }
+
+  Future<void> _syncItem(ItemModel item) async {
     final actions = <Future<void> Function()>[
       () => _cancelNotification(itemId(item.id)),
       () => _cancelNotification(pendingId(item.id)),
@@ -284,7 +304,11 @@ class ReminderSyncService {
     await _runBestEffort(actions);
   }
 
-  Future<void> syncBirthday(BirthdayModel b) async {
+  Future<void> syncBirthday(BirthdayModel b) {
+    return _enqueue(() => _syncBirthday(b));
+  }
+
+  Future<void> _syncBirthday(BirthdayModel b) async {
     final actions = <Future<void> Function()>[
       () => _cancelNotification(birthdayAdvanceId(b.id)),
       () => _cancelNotification(birthdayDayId(b.id)),
@@ -382,6 +406,25 @@ class ReminderSyncService {
       );
     }
     return _scheduleWeakReminder(id: id, title: title, body: body, when: when);
+  }
+
+  Future<T> _enqueue<T>(Future<T> Function() action) async {
+    final previous = _operationTail;
+    final gate = Completer<void>();
+    _operationTail = gate.future;
+    try {
+      await previous;
+    } catch (_) {
+      // A failed operation must not strand later reminder work.
+    }
+    try {
+      return await action();
+    } finally {
+      gate.complete();
+      if (identical(_operationTail, gate.future)) {
+        _operationTail = Future<void>.value();
+      }
+    }
   }
 }
 
