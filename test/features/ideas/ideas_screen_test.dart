@@ -138,6 +138,85 @@ void main() {
     expect(find.textContaining(privateMarker), findsNothing);
     expect(refreshException, isNull);
   });
+
+  testWidgets('empty idea title preserves the draft and can be corrected', (
+    tester,
+  ) async {
+    final selectedTag = AppConstants.ideaTags[1];
+    final repository = _ScriptedIdeaRepository([
+      <IdeaModel>[],
+      [_idea('Trimmed title', tag: selectedTag)],
+    ]);
+
+    await tester.pumpWidget(
+      MaterialApp(home: IdeasScreen(ideaRepository: repository)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.add));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField).at(0), '   ');
+    await tester.enterText(find.byType(TextField).at(1), 'draft body');
+    tester
+        .widget<DropdownButtonFormField<String>>(
+          find.byType(DropdownButtonFormField<String>),
+        )
+        .onChanged!(selectedTag);
+    await tester.pump();
+
+    await tester.tap(find.widgetWithText(FilledButton, '保存'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('记录灵感'), findsOneWidget);
+    expect(find.text('请输入标题'), findsOneWidget);
+    expect(
+      tester.widget<TextField>(find.byType(TextField).at(1)).controller?.text,
+      'draft body',
+    );
+    expect(
+      tester
+          .widget<DropdownButtonFormField<String>>(
+            find.byType(DropdownButtonFormField<String>),
+          )
+          .initialValue,
+      selectedTag,
+    );
+    expect(repository.createCalls, 0);
+
+    await tester.enterText(find.byType(TextField).at(0), '  Trimmed title  ');
+    await tester.tap(find.widgetWithText(FilledButton, '保存'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('记录灵感'), findsNothing);
+    expect(find.text('Trimmed title'), findsOneWidget);
+    expect(repository.createCalls, 1);
+    expect(repository.getAllCalls, 2);
+    expect(repository.created, [
+      (title: 'Trimmed title', content: 'draft body', tag: selectedTag),
+    ]);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('cancelling an idea draft does not persist or refresh', (
+    tester,
+  ) async {
+    final repository = _ScriptedIdeaRepository([<IdeaModel>[]]);
+
+    await tester.pumpWidget(
+      MaterialApp(home: IdeasScreen(ideaRepository: repository)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.add));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).at(0), 'cancelled title');
+    await tester.tap(find.widgetWithText(TextButton, '取消'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('记录灵感'), findsNothing);
+    expect(repository.createCalls, 0);
+    expect(repository.getAllCalls, 1);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 class _ScriptedIdeaRepository extends IdeaRepository {
@@ -146,7 +225,9 @@ class _ScriptedIdeaRepository extends IdeaRepository {
 
   final List<Object> _results;
   final List<String?> requestedTags = [];
+  final List<({String title, String content, String tag})> created = [];
   int getAllCalls = 0;
+  int createCalls = 0;
 
   @override
   Future<List<IdeaModel>> getAll({String? tag}) {
@@ -163,6 +244,17 @@ class _ScriptedIdeaRepository extends IdeaRepository {
     }
     if (result is Future<List<IdeaModel>>) return result;
     return Future<List<IdeaModel>>.value((result as List).cast<IdeaModel>());
+  }
+
+  @override
+  Future<IdeaModel> create({
+    required String title,
+    required String content,
+    String tag = '鐢熸椿',
+  }) async {
+    createCalls += 1;
+    created.add((title: title, content: content, tag: tag));
+    return _idea(title, tag: tag);
   }
 }
 

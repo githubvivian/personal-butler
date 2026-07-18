@@ -82,6 +82,7 @@ class _IdeasScreenState extends State<IdeasScreen> {
     final title = TextEditingController();
     final content = TextEditingController();
     String tag = AppConstants.ideaTags.first;
+    String? errorText;
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => StatefulBuilder(
@@ -106,6 +107,16 @@ class _IdeasScreenState extends State<IdeasScreen> {
                     .toList(),
                 onChanged: (v) => setLocal(() => tag = v ?? tag),
               ),
+              if (errorText != null) ...[
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    errorText!,
+                    style: const TextStyle(color: AppColors.danger),
+                  ),
+                ),
+              ],
             ],
           ),
           actions: [
@@ -114,7 +125,13 @@ class _IdeasScreenState extends State<IdeasScreen> {
               child: const Text('取消'),
             ),
             FilledButton(
-              onPressed: () => Navigator.pop(context, true),
+              onPressed: () {
+                if (title.text.trim().isEmpty) {
+                  setLocal(() => errorText = '请输入标题');
+                  return;
+                }
+                Navigator.pop(context, true);
+              },
               child: const Text('保存'),
             ),
           ],
