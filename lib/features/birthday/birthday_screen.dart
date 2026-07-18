@@ -24,8 +24,18 @@ class BirthdayScreen extends StatefulWidget {
   State<BirthdayScreen> createState() => _BirthdayScreenState();
 }
 
+enum _BirthdayLoadStatus { loading, ready, failed }
+
 class _BirthdayScreenState extends State<BirthdayScreen> {
   List<BirthdayModel> _items = [];
+  _BirthdayLoadStatus _loadStatus = _BirthdayLoadStatus.loading;
+  bool _hasSnapshot = false;
+  bool _adding = false;
+  int _loadGeneration = 0;
+  final Set<String> _deletingIds = <String>{};
+
+  BirthdayRepository get _repository =>
+      widget.birthdayRepository ?? context.read<AppState>().birthdays;
 
   @override
   void initState() {
@@ -33,20 +43,59 @@ class _BirthdayScreenState extends State<BirthdayScreen> {
     _load();
   }
 
+  @override
+  void didUpdateWidget(covariant BirthdayScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.birthdayRepository, widget.birthdayRepository)) {
+      _items = [];
+      _hasSnapshot = false;
+      _load();
+    }
+  }
+
   Future<void> _load() async {
-    final repository =
-        widget.birthdayRepository ?? context.read<AppState>().birthdays;
-    final items = await repository.getAll();
-    if (!mounted) return;
-    setState(() => _items = items);
+    final generation = ++_loadGeneration;
+    final repository = _repository;
+    setState(() => _loadStatus = _BirthdayLoadStatus.loading);
+    try {
+      final items = await repository.getAll();
+      if (!_isCurrentLoad(generation, repository)) return;
+      setState(() {
+        _items = items;
+        _hasSnapshot = true;
+        _loadStatus = _BirthdayLoadStatus.ready;
+      });
+    } catch (_) {
+      if (!_isCurrentLoad(generation, repository)) return;
+      setState(() => _loadStatus = _BirthdayLoadStatus.failed);
+    }
+  }
+
+  bool _isCurrentLoad(int generation, BirthdayRepository repository) {
+    return mounted &&
+        generation == _loadGeneration &&
+        identical(repository, _repository);
   }
 
   Future<void> _add() async {
+    if (_adding) return;
+    setState(() => _adding = true);
+    try {
+      await _addOnce();
+    } catch (_) {
+      if (mounted) snack(context, '保存失败，请重试');
+    } finally {
+      if (mounted) setState(() => _adding = false);
+    }
+  }
+
+  Future<void> _addOnce() async {
     var nameInput = '';
     var relationInput = '';
     var monthInput = '1';
     var dayInput = '1';
     bool isLunar = false;
+    bool dialogSubmitted = false;
     String? errorText;
     final ok = await showDialog<bool>(
       context: context,
@@ -111,6 +160,7 @@ class _BirthdayScreenState extends State<BirthdayScreen> {
             ),
             FilledButton(
               onPressed: () {
+                if (dialogSubmitted) return;
                 final nameValue = nameInput.trim();
                 final month = int.tryParse(monthInput.trim());
                 final day = int.tryParse(dayInput.trim());
@@ -128,6 +178,7 @@ class _BirthdayScreenState extends State<BirthdayScreen> {
                   setLocal(() => errorText = '请输入有效的生日日期');
                   return;
                 }
+                dialogSubmitted = true;
                 Navigator.pop(context, true);
               },
               child: const Text('保存'),
@@ -151,8 +202,7 @@ class _BirthdayScreenState extends State<BirthdayScreen> {
       snack(context, '请输入有效的生日日期');
       return;
     }
-    final repository =
-        widget.birthdayRepository ?? context.read<AppState>().birthdays;
+    final repository = _repository;
     final permissionResult =
         await (widget.notificationPermissionCoordinator ??
                 NotificationPermissionCoordinator.instance)
@@ -168,7 +218,7 @@ class _BirthdayScreenState extends State<BirthdayScreen> {
                 );
               },
             );
-    if (!mounted) return;
+    if (!mounted || !identical(repository, _repository)) return;
     final warning = permissionResult.warningMessage;
     if (warning != null) snack(context, warning);
     await _load();
@@ -179,23 +229,72 @@ class _BirthdayScreenState extends State<BirthdayScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('生日提醒'),
-        actions: [IconButton(onPressed: _add, icon: const Icon(Icons.add))],
+        actions: [
+          IconButton(
+            onPressed: _adding ? null : _add,
+            icon: const Icon(Icons.add),
+          ),
+        ],
       ),
-      body: RefreshIndicator(
-        onRefresh: _load,
-        child: _items.isEmpty
-            ? ListView(
-                children: const [
-                  SizedBox(height: 80),
-                  Center(child: Text('暂无生日记录')),
-                ],
-              )
-            : ListView.builder(
-                padding: const EdgeInsets.all(16),
-                itemCount: _items.length,
-                itemBuilder: (_, i) => _card(_items[i]),
-              ),
-      ),
+      body: RefreshIndicator(onRefresh: _load, child: _buildContent()),
+    );
+  }
+
+  Widget _buildContent() {
+    if (!_hasSnapshot) {
+      if (_loadStatus == _BirthdayLoadStatus.loading) {
+        return _buildCenteredList(const CircularProgressIndicator());
+      }
+      return _buildCenteredList(_buildFailureNotice());
+    }
+
+    if (_items.isEmpty) {
+      if (_loadStatus == _BirthdayLoadStatus.loading) {
+        return _buildCenteredList(const CircularProgressIndicator());
+      }
+      if (_loadStatus == _BirthdayLoadStatus.failed) {
+        return _buildCenteredList(_buildFailureNotice());
+      }
+      return _buildCenteredList(const Text('暂无生日记录'));
+    }
+
+    final showLoadState = _loadStatus != _BirthdayLoadStatus.ready;
+    return ListView.builder(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.all(16),
+      itemCount: _items.length + (showLoadState ? 1 : 0),
+      itemBuilder: (_, index) {
+        if (showLoadState && index == 0) {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: _loadStatus == _BirthdayLoadStatus.loading
+                ? const LinearProgressIndicator()
+                : _buildFailureNotice(),
+          );
+        }
+        return _card(_items[index - (showLoadState ? 1 : 0)]);
+      },
+    );
+  }
+
+  Widget _buildCenteredList(Widget child) {
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.all(16),
+      children: [
+        const SizedBox(height: 80),
+        Center(child: child),
+      ],
+    );
+  }
+
+  Widget _buildFailureNotice() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Text('数据加载失败，请重试'),
+        TextButton(onPressed: _load, child: const Text('重试')),
+      ],
     );
   }
 
@@ -278,22 +377,36 @@ class _BirthdayScreenState extends State<BirthdayScreen> {
               ),
             IconButton(
               icon: const Icon(Icons.delete_outline, color: AppColors.danger),
-              onPressed: () async {
-                final action = await ConfirmDeleteDialog.show(
-                  context,
-                  title: '删除生日',
-                  message: '确认删除该生日提醒？',
-                  showHardDelete: false,
-                );
-                if (action == 'soft') {
-                  await context.read<AppState>().birthdays.softDelete(b.id);
-                  _load();
-                }
-              },
+              onPressed: _deletingIds.contains(b.id) ? null : () => _delete(b),
             ),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _delete(BirthdayModel birthday) async {
+    if (_deletingIds.contains(birthday.id)) return;
+    final repository = _repository;
+    setState(() => _deletingIds.add(birthday.id));
+    try {
+      final action = await ConfirmDeleteDialog.show(
+        context,
+        title: '删除生日',
+        message: '确认删除该生日提醒？',
+        showHardDelete: false,
+      );
+      if (!mounted || action != 'soft') return;
+      if (!identical(repository, _repository)) return;
+      await repository.softDelete(birthday.id);
+      if (!mounted || !identical(repository, _repository)) return;
+      await _load();
+    } catch (_) {
+      if (mounted && identical(repository, _repository)) {
+        snack(context, '删除失败，请重试');
+      }
+    } finally {
+      if (mounted) setState(() => _deletingIds.remove(birthday.id));
+    }
   }
 }
