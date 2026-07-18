@@ -11,19 +11,24 @@ class OcrService {
   OcrService._();
   static final OcrService instance = OcrService._();
 
-  TextRecognizer? _recognizer;
-
-  TextRecognizer get recognizer {
-    _recognizer ??= TextRecognizer(script: TextRecognitionScript.chinese);
-    return _recognizer!;
-  }
-
   Future<String> recognizeAsset(String assetId) async {
     final file = await _resolveFile(assetId);
     if (file == null) throw const OcrSourceUnavailableException();
     final input = InputImage.fromFilePath(file.path);
-    final result = await recognizer.processImage(input);
-    return result.text;
+    // ML Kit keeps a native recognizer (and its language model) alive until
+    // close() is called. Scope it to one request so leaving the OCR screen can
+    // release that memory on devices with tighter background limits.
+    final recognizer = TextRecognizer(script: TextRecognitionScript.chinese);
+    try {
+      final result = await recognizer.processImage(input);
+      return result.text;
+    } finally {
+      // Cleanup must not turn a successful recognition into a user-visible
+      // failure if the platform channel is already shutting down.
+      try {
+        await recognizer.close();
+      } catch (_) {}
+    }
   }
 
   Future<File?> _resolveFile(String sourceId) async {
@@ -35,11 +40,6 @@ class OcrService {
     }
     final asset = await AssetEntity.fromId(sourceId);
     return asset?.file;
-  }
-
-  void dispose() {
-    _recognizer?.close();
-    _recognizer = null;
   }
 }
 
