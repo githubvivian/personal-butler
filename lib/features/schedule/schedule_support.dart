@@ -69,6 +69,23 @@ const scheduleSectionPresets = [
   ),
 ];
 
+int? scheduleTimeToMinutes(String value) {
+  final match = RegExp(r'^(?:[01]\d|2[0-3]):[0-5]\d$').firstMatch(value.trim());
+  if (match == null) return null;
+  final parts = value.trim().split(':');
+  return int.parse(parts[0]) * 60 + int.parse(parts[1]);
+}
+
+String? scheduleTimeRangeError(String startTime, String endTime) {
+  final startMinutes = scheduleTimeToMinutes(startTime);
+  final endMinutes = scheduleTimeToMinutes(endTime);
+  if (startMinutes == null || endMinutes == null) {
+    return '时间格式应为 HH:mm（例如 08:00）';
+  }
+  if (endMinutes <= startMinutes) return '结束时间必须晚于开始时间';
+  return null;
+}
+
 String scheduleConflictMessage(List<ScheduleEntryModel> conflicts) {
   return conflicts
       .map(
@@ -340,6 +357,14 @@ Future<ScheduleEntryDraft?> showScheduleEntryEditor(
                   final courseTitle = title.text.trim();
                   if (courseTitle.isEmpty) {
                     setLocal(() => errorText = '请填写课程名称');
+                    return;
+                  }
+                  final timeError = scheduleTimeRangeError(
+                    start.text,
+                    end.text,
+                  );
+                  if (timeError != null) {
+                    setLocal(() => errorText = timeError);
                     return;
                   }
                   if (startWeek > endWeek) {

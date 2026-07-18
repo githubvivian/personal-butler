@@ -93,4 +93,58 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('schedule editor rejects invalid and reversed time ranges', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1400, 1000);
+    addTearDown(tester.view.resetPhysicalSize);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final settings = ScheduleSettingsModel(
+      semesterStartWeek: 1,
+      semesterEndWeek: 20,
+      updatedAt: DateTime(2026, 7, 16),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: ElevatedButton(
+              onPressed: () {
+                showScheduleEntryEditor(
+                  context,
+                  dialogTitle: '添加上课',
+                  settings: settings,
+                );
+              },
+              child: const Text('打开编辑器'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('打开编辑器'));
+    await tester.pumpAndSettle();
+    final fields = find.byType(TextField);
+    await tester.enterText(fields.at(0), '非法时间测试');
+    await tester.enterText(fields.at(2), '25:99');
+    await tester.enterText(fields.at(3), '01:00');
+    await tester.tap(find.widgetWithText(FilledButton, '保存'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('时间格式应为 HH:mm（例如 08:00）'), findsOneWidget);
+    expect(find.text('添加上课'), findsOneWidget);
+
+    await tester.enterText(fields.at(2), '10:00');
+    await tester.enterText(fields.at(3), '09:00');
+    await tester.tap(find.widgetWithText(FilledButton, '保存'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('结束时间必须晚于开始时间'), findsOneWidget);
+    expect(find.text('添加上课'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
