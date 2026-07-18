@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -33,21 +35,28 @@ class SettingsScreen extends StatefulWidget {
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> {
+class _SettingsScreenState extends State<SettingsScreen>
+    with WidgetsBindingObserver {
   Map<String, int> _stats = {};
   String _scheduleSummary = '';
   DataLoadStatus _loadStatus = DataLoadStatus.loading;
   bool _hasSnapshot = false;
+  Future<void>? _notificationSettingsOpenRequest;
   Future<void>? _exactAlarmPermissionRequest;
   late AppState _appState;
   late ItemRepository _itemRepository;
   late int _observedDataRevision;
   int _loadGeneration = 0;
   int _statsGeneration = 0;
+  int _notificationSettingsAttemptGeneration = 0;
+  bool _waitingForNotificationSettingsReturn = false;
+  bool _notificationSettingsLaunchConfirmed = false;
+  bool _notificationSettingsLifecycleLeft = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _appState = context.read<AppState>();
     _itemRepository = _appState.items;
     _observedDataRevision = _appState.dataRevision;
@@ -60,9 +69,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void dispose() {
     _loadGeneration += 1;
     _statsGeneration += 1;
+    _notificationSettingsAttemptGeneration += 1;
+    _clearNotificationSettingsReturnState();
+    WidgetsBinding.instance.removeObserver(this);
     _appState.removeListener(_handleExternalDataRefresh);
     _itemRepository.removeListener(_handleItemMutation);
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!_waitingForNotificationSettingsReturn) return;
+    switch (state) {
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.paused:
+        _notificationSettingsLifecycleLeft = true;
+        break;
+      case AppLifecycleState.resumed:
+        _maybeReconcileAfterNotificationSettingsReturn();
+        break;
+      case AppLifecycleState.detached:
+        break;
+    }
   }
 
   void _handleItemMutation() => _loadItemStats();
@@ -298,7 +327,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await _load();
   }
 
-  Future<void> _openNotificationSettings() async {
+  Future<void> _openNotificationSettings() {
+    if (_waitingForNotificationSettingsReturn) {
+      return _notificationSettingsOpenRequest ?? Future<void>.value();
+    }
+    final inFlight = _notificationSettingsOpenRequest;
+    if (inFlight != null) return inFlight;
+
+    late final Future<void> request;
+    request = _runOpenNotificationSettings().whenComplete(() {
+      if (identical(_notificationSettingsOpenRequest, request)) {
+        _notificationSettingsOpenRequest = null;
+      }
+    });
+    _notificationSettingsOpenRequest = request;
+    return request;
+  }
+
+  Future<void> _runOpenNotificationSettings() async {
+    final attemptGeneration = ++_notificationSettingsAttemptGeneration;
+    _waitingForNotificationSettingsReturn = true;
+    _notificationSettingsLaunchConfirmed = false;
+    _notificationSettingsLifecycleLeft = false;
+
     var result = SystemSettingsLaunchResult.unavailable;
     try {
       result =
@@ -306,9 +357,47 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SystemSettingsService().openAppNotificationSettings)();
     } catch (_) {}
 
-    if (!mounted) return;
+    if (!mounted ||
+        attemptGeneration != _notificationSettingsAttemptGeneration) {
+      return;
+    }
     if (result == SystemSettingsLaunchResult.unavailable) {
+      _clearNotificationSettingsReturnState();
       snack(context, '无法打开系统通知设置，请手动前往应用设置');
+      return;
+    }
+
+    _notificationSettingsLaunchConfirmed = true;
+    _maybeReconcileAfterNotificationSettingsReturn();
+  }
+
+  void _maybeReconcileAfterNotificationSettingsReturn() {
+    if (!mounted ||
+        !_waitingForNotificationSettingsReturn ||
+        !_notificationSettingsLaunchConfirmed ||
+        !_notificationSettingsLifecycleLeft ||
+        WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
+      return;
+    }
+
+    _clearNotificationSettingsReturnState();
+    unawaited(_reconcileAfterNotificationSettingsReturn());
+  }
+
+  void _clearNotificationSettingsReturnState() {
+    _waitingForNotificationSettingsReturn = false;
+    _notificationSettingsLaunchConfirmed = false;
+    _notificationSettingsLifecycleLeft = false;
+  }
+
+  Future<void> _reconcileAfterNotificationSettingsReturn() async {
+    final reconciler =
+        widget.reminderReconciler ?? ReminderSyncService.instance.reconcileAll;
+    try {
+      await reconciler(items: _appState.items, birthdays: _appState.birthdays);
+    } catch (_) {
+      if (!mounted) return;
+      snack(context, '通知设置已返回，但事项和生日提醒重新同步失败，请稍后重试');
     }
   }
 

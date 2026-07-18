@@ -14,6 +14,7 @@ import 'package:personal_butler/features/settings/settings_screen.dart';
 import 'package:provider/provider.dart';
 
 const _safeFailureMessage = '无法打开系统通知设置，请手动前往应用设置';
+const _notificationReconcileFailureMessage = '通知设置已返回，但事项和生日提醒重新同步失败，请稍后重试';
 const _exactAlarmTitle = '提高提醒准点性';
 const _exactAlarmSubtitle = '进入系统精确闹钟授权，帮助事项和生日提醒更准时';
 const _exactAlarmSuccessMessage = '精确闹钟权限已开启，事项和生日提醒已重新同步';
@@ -27,13 +28,18 @@ void main() {
 
   Future<void> pumpSettings(
     WidgetTester tester,
-    NotificationSettingsOpener opener,
-  ) async {
+    NotificationSettingsOpener opener, {
+    ReminderReconciler? reconciler,
+    _SettingsAppState? appState,
+  }) async {
     await tester.pumpWidget(
       ChangeNotifierProvider<AppState>.value(
-        value: _SettingsAppState(),
+        value: appState ?? _SettingsAppState(),
         child: MaterialApp(
-          home: SettingsScreen(notificationSettingsOpener: opener),
+          home: SettingsScreen(
+            notificationSettingsOpener: opener,
+            reminderReconciler: reconciler,
+          ),
         ),
       ),
     );
@@ -121,6 +127,238 @@ void main() {
     expect(find.textContaining(sensitiveMarker), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  for (final leftState in <AppLifecycleState>[
+    AppLifecycleState.inactive,
+    AppLifecycleState.paused,
+    AppLifecycleState.hidden,
+  ]) {
+    testWidgets(
+      'reconciles once after notification settings returns from ${leftState.name}',
+      (tester) async {
+        final appState = _SettingsAppState();
+        var reconcileCalls = 0;
+        ItemRepository? reconciledItems;
+        BirthdayRepository? reconciledBirthdays;
+        await pumpSettings(
+          tester,
+          () async => SystemSettingsLaunchResult.launched,
+          appState: appState,
+          reconciler: ({required items, required birthdays}) async {
+            reconcileCalls++;
+            reconciledItems = items;
+            reconciledBirthdays = birthdays;
+          },
+        );
+
+        await tester.tap(find.text('通知设置'));
+        await tester.pump();
+        expect(reconcileCalls, 0);
+
+        tester.binding.handleAppLifecycleStateChanged(leftState);
+        await tester.pump();
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await tester.pumpAndSettle();
+
+        expect(reconcileCalls, 1);
+        expect(identical(reconciledItems, appState.items), isTrue);
+        expect(identical(reconciledBirthdays, appState.birthdays), isTrue);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets('notification settings without leaving does not reconcile', (
+    tester,
+  ) async {
+    var reconcileCalls = 0;
+    await pumpSettings(
+      tester,
+      () async => SystemSettingsLaunchResult.launched,
+      reconciler: ({required items, required birthdays}) async {
+        reconcileCalls++;
+      },
+    );
+
+    await tester.tap(find.text('通知设置'));
+    await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+
+    expect(reconcileCalls, 0);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('rapid notification settings taps share one opener request', (
+    tester,
+  ) async {
+    final launch = Completer<SystemSettingsLaunchResult>();
+    var openerCalls = 0;
+    var reconcileCalls = 0;
+    await pumpSettings(
+      tester,
+      () {
+        openerCalls++;
+        return launch.future;
+      },
+      reconciler: ({required items, required birthdays}) async {
+        reconcileCalls++;
+      },
+    );
+
+    await tester.tap(find.text('通知设置'));
+    await tester.tap(find.text('通知设置'));
+    await tester.pump();
+    expect(openerCalls, 1);
+
+    launch.complete(SystemSettingsLaunchResult.launched);
+    await tester.pumpAndSettle();
+    expect(reconcileCalls, 0);
+
+    await tester.tap(find.text('通知设置'));
+    await tester.pump();
+    expect(openerCalls, 1);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+
+    expect(openerCalls, 1);
+    expect(reconcileCalls, 1);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'notification reconciliation failure shows a safe message after return',
+    (tester) async {
+      const sensitiveMarker = 'notification-reconcile-private-token-93af';
+      await pumpSettings(
+        tester,
+        () async => SystemSettingsLaunchResult.launched,
+        reconciler: ({required items, required birthdays}) async {
+          throw StateError(sensitiveMarker);
+        },
+      );
+
+      await tester.tap(find.text('通知设置'));
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+
+      expect(find.text(_notificationReconcileFailureMessage), findsOneWidget);
+      expect(find.textContaining(sensitiveMarker), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('duplicate resume events reconcile only once', (tester) async {
+    var reconcileCalls = 0;
+    await pumpSettings(
+      tester,
+      () async => SystemSettingsLaunchResult.launched,
+      reconciler: ({required items, required birthdays}) async {
+        reconcileCalls++;
+      },
+    );
+
+    await tester.tap(find.text('通知设置'));
+    await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+
+    expect(reconcileCalls, 1);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'notification settings launch completing after resume still reconciles once',
+    (tester) async {
+      final launch = Completer<SystemSettingsLaunchResult>();
+      var reconcileCalls = 0;
+      await pumpSettings(
+        tester,
+        () => launch.future,
+        reconciler: ({required items, required birthdays}) async {
+          reconcileCalls++;
+        },
+      );
+
+      await tester.tap(find.text('通知设置'));
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      expect(reconcileCalls, 0);
+
+      launch.complete(SystemSettingsLaunchResult.launched);
+      await tester.pumpAndSettle();
+
+      expect(reconcileCalls, 1);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'failed notification settings launch does not arm reconciliation',
+    (tester) async {
+      var reconcileCalls = 0;
+      await pumpSettings(
+        tester,
+        () async => SystemSettingsLaunchResult.unavailable,
+        reconciler: ({required items, required birthdays}) async {
+          reconcileCalls++;
+        },
+      );
+
+      await tester.tap(find.text('通知设置'));
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+
+      expect(reconcileCalls, 0);
+      expect(find.text(_safeFailureMessage), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'disposing before notification settings returns prevents reconcile',
+    (tester) async {
+      var reconcileCalls = 0;
+      await pumpSettings(
+        tester,
+        () async => SystemSettingsLaunchResult.launched,
+        reconciler: ({required items, required birthdays}) async {
+          reconcileCalls++;
+        },
+      );
+
+      await tester.tap(find.text('通知设置'));
+      await tester.pump();
+      await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+
+      expect(reconcileCalls, 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('stats reload after returning from the birthday page', (
     tester,
