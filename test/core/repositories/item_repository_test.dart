@@ -44,6 +44,19 @@ void main() {
     });
   });
 
+  group('ItemRepository pending visibility', () {
+    test('pending queries consistently include tasks', () async {
+      final task = _buildItem('task-pending-visibility').copyWith(type: 'task');
+      await database.insert('items', task.toMap());
+
+      final pendingItems = await repository.getPendingItems();
+      final stats = await repository.getTodayStats();
+
+      expect(pendingItems.map((item) => item.id), [task.id]);
+      expect(stats['pending'], 1);
+    });
+  });
+
   group('ItemRepository.createOcrDraftWithAttachment', () {
     test('creates one meeting inbox draft and its attachment', () async {
       const ocrText = 'Quarterly planning\nTuesday at 10:00';

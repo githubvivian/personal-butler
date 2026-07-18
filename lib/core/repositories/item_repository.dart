@@ -42,7 +42,7 @@ class ItemRepository extends ChangeNotifier {
 
   Future<List<ItemModel>> getPendingItems({bool includeDone = false}) async {
     final db = await _databaseProvider();
-    final types = ['reimbursement', 'review'];
+    final types = pendingItemTypes;
     final placeholders = List.filled(types.length, '?').join(',');
     var where =
         'type IN ($placeholders) AND inbox_status = ? AND is_deleted = 0';
@@ -210,10 +210,8 @@ class ItemRepository extends ChangeNotifier {
       title: title.isEmpty ? '新事项' : title,
       owner: owner,
       inboxStatus: inboxStatus,
-      pendingStatus: type == 'reimbursement' || type == 'review'
-          ? 'submitted'
-          : null,
-      nextFollowUpAt: type == 'reimbursement' || type == 'review'
+      pendingStatus: isPendingItemType(type) ? 'submitted' : null,
+      nextFollowUpAt: isPendingItemType(type)
           ? now.add(const Duration(days: 7))
           : null,
       ocrText: ocrText,
@@ -364,8 +362,15 @@ class ItemRepository extends ChangeNotifier {
       'SELECT COUNT(*) as c FROM items WHERE inbox_status = ? AND is_deleted = 0',
       ['inbox'],
     );
+    final pendingPlaceholders = List.filled(
+      pendingItemTypes.length,
+      '?',
+    ).join(',');
     final pending = await db.rawQuery(
-      "SELECT COUNT(*) as c FROM items WHERE type IN ('reimbursement','review') AND status != 'done' AND is_deleted = 0",
+      'SELECT COUNT(*) as c FROM items '
+      'WHERE type IN ($pendingPlaceholders) AND inbox_status = ? '
+      "AND status != 'done' AND is_deleted = 0",
+      [...pendingItemTypes, 'confirmed'],
     );
     final todayItems = await db.rawQuery(
       'SELECT COUNT(*) as c FROM items WHERE start_at >= ? AND start_at < ? AND is_deleted = 0',

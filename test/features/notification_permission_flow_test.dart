@@ -61,6 +61,54 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('CreateItem saves a task as a pending follow-up', (tester) async {
+    final repository = _SpyItemRepository();
+    final events = <String>[];
+    final coordinator = NotificationPermissionCoordinator(
+      requestPermission: () async {
+        events.add('request');
+        return true;
+      },
+    );
+    final router = GoRouter(
+      initialLocation: '/host',
+      routes: [
+        GoRoute(
+          path: '/host',
+          builder: (_, _) => const Scaffold(body: Text('host')),
+        ),
+        GoRoute(
+          path: '/create',
+          builder: (_, _) => CreateItemScreen(
+            itemRepository: repository,
+            notificationPermissionCoordinator: coordinator,
+          ),
+        ),
+      ],
+    );
+    addTearDown(router.dispose);
+    repository.onSave = (_) async => events.add('persist');
+
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    router.push('/create');
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, '待处理任务');
+    final taskChip = find.widgetWithText(ChoiceChip, '任务');
+    await tester.ensureVisible(taskChip);
+    await tester.tap(taskChip);
+    await tester.pump();
+    await _tapCreateSave(tester);
+    await tester.pumpAndSettle();
+
+    expect(events, ['request', 'persist']);
+    expect(repository.saved.single.type, 'task');
+    expect(repository.saved.single.isPendingType, isTrue);
+    expect(repository.saved.single.pendingStatus, 'submitted');
+    expect(repository.saved.single.nextFollowUpAt, isNotNull);
+    expect(find.text('host'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('CreateItem does not request for an untimed non-pending item', (
     tester,
   ) async {

@@ -67,7 +67,7 @@ class _CreateItemScreenState extends State<CreateItemScreen> {
       snack(context, '请输入标题');
       return;
     }
-    final isPending = _type == 'reimbursement' || _type == 'review';
+    final isPending = isPendingItemType(_type);
     final now = DateTime.now();
     final item = ItemModel(
       id: _uuid.v4(),
@@ -100,7 +100,7 @@ class _CreateItemScreenState extends State<CreateItemScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isPending = _type == 'reimbursement' || _type == 'review';
+    final isPending = isPendingItemType(_type);
     return Scaffold(
       appBar: AppBar(title: const Text('创建事项')),
       body: ListView(

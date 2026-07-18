@@ -13,6 +13,10 @@ DateTime? _parseModelDate(dynamic value) {
   return DateTime.parse(value as String);
 }
 
+const pendingItemTypes = <String>['task', 'reimbursement', 'review'];
+
+bool isPendingItemType(String type) => pendingItemTypes.contains(type);
+
 class ItemModel {
   final String id;
   final String type;
@@ -58,7 +62,7 @@ class ItemModel {
     required this.updatedAt,
   });
 
-  bool get isPendingType => type == 'reimbursement' || type == 'review';
+  bool get isPendingType => isPendingItemType(type);
   bool get isInbox => inboxStatus == 'inbox';
   bool get isSoftDeleted => isDeleted;
 

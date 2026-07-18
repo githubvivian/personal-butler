@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:provider/provider.dart';
 import '../../core/constants/app_constants.dart';
+import '../../core/models/models.dart';
 import '../../core/providers/app_state.dart';
 import '../../core/repositories/item_repository.dart';
 import '../../core/services/notification_permission_coordinator.dart';
@@ -194,7 +195,7 @@ class _OcrConfirmScreenState extends State<OcrConfirmScreen> {
         return;
       }
 
-      final isPending = form.type == 'reimbursement' || form.type == 'review';
+      final isPending = isPendingItemType(form.type);
       final updated = item.copyWith(
         type: form.type,
         title: form.title,
