@@ -40,9 +40,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(permissionRequests, 1);
-    expect(repository.created, [
-      (isLunar: false, month: 1, day: 1),
-    ]);
+    expect(repository.created, [(isLunar: false, month: 1, day: 1)]);
     expect(tester.takeException(), isNull);
   });
 
@@ -78,9 +76,42 @@ void main() {
       expect(permissionRequests, 0);
       expect(repository.created, isEmpty);
       expect(find.text('请输入有效的生日日期'), findsOneWidget);
+      expect(find.text('添加生日'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('empty birthday name is explained without closing the dialog', (
+    tester,
+  ) async {
+    final repository = _SpyBirthdayRepository();
+    var permissionRequests = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BirthdayScreen(
+          birthdayRepository: repository,
+          notificationPermissionCoordinator: NotificationPermissionCoordinator(
+            requestPermission: () async {
+              permissionRequests += 1;
+              return true;
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.add));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, '保存'));
+    await tester.pumpAndSettle();
+
+    expect(permissionRequests, 0);
+    expect(repository.created, isEmpty);
+    expect(find.text('请输入姓名'), findsOneWidget);
+    expect(find.text('添加生日'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 class _SpyBirthdayRepository extends BirthdayRepository {

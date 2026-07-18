@@ -47,6 +47,7 @@ class _BirthdayScreenState extends State<BirthdayScreen> {
     var monthInput = '1';
     var dayInput = '1';
     bool isLunar = false;
+    String? errorText;
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => StatefulBuilder(
@@ -90,12 +91,47 @@ class _BirthdayScreenState extends State<BirthdayScreen> {
                     ),
                   ],
                 ),
+                if (errorText != null) ...[
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      errorText!,
+                      style: const TextStyle(color: AppColors.danger),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
-            FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('保存')),
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final nameValue = nameInput.trim();
+                final month = int.tryParse(monthInput.trim());
+                final day = int.tryParse(dayInput.trim());
+                if (nameValue.isEmpty) {
+                  setLocal(() => errorText = '请输入姓名');
+                  return;
+                }
+                if (month == null ||
+                    day == null ||
+                    !BirthdayDateHelper.isValidDate(
+                      isLunar: isLunar,
+                      month: month,
+                      day: day,
+                    )) {
+                  setLocal(() => errorText = '请输入有效的生日日期');
+                  return;
+                }
+                Navigator.pop(context, true);
+              },
+              child: const Text('保存'),
+            ),
           ],
         ),
       ),
@@ -148,10 +184,12 @@ class _BirthdayScreenState extends State<BirthdayScreen> {
       body: RefreshIndicator(
         onRefresh: _load,
         child: _items.isEmpty
-            ? ListView(children: const [
-                SizedBox(height: 80),
-                Center(child: Text('暂无生日记录')),
-              ])
+            ? ListView(
+                children: const [
+                  SizedBox(height: 80),
+                  Center(child: Text('暂无生日记录')),
+                ],
+              )
             : ListView.builder(
                 padding: const EdgeInsets.all(16),
                 itemCount: _items.length,
@@ -171,7 +209,11 @@ class _BirthdayScreenState extends State<BirthdayScreen> {
     final next = countdown?.date;
     final days = countdown?.daysUntil;
     final lunarLabel = b.isLunar
-        ? LunarDateHelper.formatLunarLabel(b.month, b.day, isLeap: b.isLeapMonth)
+        ? LunarDateHelper.formatLunarLabel(
+            b.month,
+            b.day,
+            isLeap: b.isLeapMonth,
+          )
         : '${b.month}月${b.day}日';
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -181,34 +223,58 @@ class _BirthdayScreenState extends State<BirthdayScreen> {
           children: [
             CircleAvatar(
               backgroundColor: AppColors.accentPink.withValues(alpha: 0.15),
-              child: Text(b.name.isNotEmpty ? b.name[0] : '?', style: const TextStyle(color: AppColors.accentPink)),
+              child: Text(
+                b.name.isNotEmpty ? b.name[0] : '?',
+                style: const TextStyle(color: AppColors.accentPink),
+              ),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(b.name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
+                  Text(
+                    b.name,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 16,
+                    ),
+                  ),
                   Text(
                     b.isLunar ? '农历 $lunarLabel' : '阳历 $lunarLabel',
-                    style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
+                    style: const TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 13,
+                    ),
                   ),
                   if (next != null)
                     Text(
                       '下次：${DateFormat('yyyy-MM-dd').format(next)}',
-                      style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textSecondary,
+                      ),
                     ),
                 ],
               ),
             ),
             if (days != null)
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: AppColors.accentPink.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(20),
                 ),
-                child: Text('$days天', style: const TextStyle(color: AppColors.accentPink, fontWeight: FontWeight.bold)),
+                child: Text(
+                  '$days天',
+                  style: const TextStyle(
+                    color: AppColors.accentPink,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ),
             IconButton(
               icon: const Icon(Icons.delete_outline, color: AppColors.danger),
