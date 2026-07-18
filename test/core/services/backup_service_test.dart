@@ -30,13 +30,20 @@ Map<String, dynamic> _validPayload() => {
   },
 };
 
-Future<void> _selectRawBackupContent(String content) async {
+Future<void> _selectRawBackupContent(String content, {int? reportedSize}) {
+  return _selectRawBackupBytes(
+    utf8.encode(content),
+    reportedSize: reportedSize,
+  );
+}
+
+Future<void> _selectRawBackupBytes(List<int> bytes, {int? reportedSize}) async {
   final directory = await Directory.systemTemp.createTemp(
     'personal_butler_backup_test_',
   );
   addTearDown(() => directory.delete(recursive: true));
   final file = File('${directory.path}/backup.pbak');
-  await file.writeAsString(content);
+  await file.writeAsBytes(bytes);
 
   TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
       .setMockMethodCallHandler(
@@ -45,7 +52,7 @@ Future<void> _selectRawBackupContent(String content) async {
           {
             'path': file.path,
             'name': 'backup.pbak',
-            'size': await file.length(),
+            'size': reportedSize ?? await file.length(),
             'bytes': null,
           },
         ],
@@ -194,6 +201,105 @@ void main() {
       throwsA(isA<BackupImportSelectionException>()),
     );
     expect(reconcileCalls, 0);
+  });
+
+  test('rejects an empty backup before decrypt or replace', () async {
+    await _selectRawBackupBytes(const []);
+    var replaceCalls = 0;
+    var reconcileCalls = 0;
+
+    await expectLater(
+      BackupService(
+        replaceAllData: (_) async {
+          replaceCalls++;
+        },
+        reconcileReminders: () async {
+          reconcileCalls++;
+        },
+      ).importEncryptedBackup(_backupPassword),
+      throwsA(isA<BackupImportFileException>()),
+    );
+
+    expect(replaceCalls, 0);
+    expect(reconcileCalls, 0);
+  });
+
+  test(
+    'rejects the actual file when it exceeds the configured limit',
+    () async {
+      await _selectRawBackupContent('12345', reportedSize: 1);
+      var replaceCalls = 0;
+      var reconcileCalls = 0;
+
+      await expectLater(
+        BackupService(
+          maxImportBytes: 4,
+          replaceAllData: (_) async {
+            replaceCalls++;
+          },
+          reconcileReminders: () async {
+            reconcileCalls++;
+          },
+        ).importEncryptedBackup(_backupPassword),
+        throwsA(
+          isA<BackupImportFileException>().having(
+            (error) => error.message,
+            'message',
+            contains('large'),
+          ),
+        ),
+      );
+
+      expect(replaceCalls, 0);
+      expect(reconcileCalls, 0);
+    },
+  );
+
+  test('uses actual bytes instead of an oversized picker report', () async {
+    await _selectRawBackupContent('{}', reportedSize: 1000000);
+    var replaceCalls = 0;
+
+    await expectLater(
+      BackupService(
+        maxImportBytes: 2,
+        replaceAllData: (_) async {
+          replaceCalls++;
+        },
+        reconcileReminders: () async {},
+      ).importEncryptedBackup(_backupPassword),
+      throwsA(isA<FormatException>()),
+    );
+
+    expect(replaceCalls, 0);
+  });
+
+  test('rejects invalid UTF-8 without exposing the path or password', () async {
+    await _selectRawBackupBytes(const [0xff, 0xfe, 0xfd]);
+    var replaceCalls = 0;
+
+    await expectLater(
+      BackupService(
+        replaceAllData: (_) async {
+          replaceCalls++;
+        },
+        reconcileReminders: () async {},
+      ).importEncryptedBackup(_backupPassword),
+      throwsA(
+        isA<BackupImportFileException>()
+            .having(
+              (error) => error.toString(),
+              'error',
+              isNot(contains(_backupPassword)),
+            )
+            .having(
+              (error) => error.toString(),
+              'error',
+              isNot(contains(Directory.systemTemp.path)),
+            ),
+      ),
+    );
+
+    expect(replaceCalls, 0);
   });
 
   test(

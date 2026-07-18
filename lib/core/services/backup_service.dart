@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
@@ -24,6 +25,15 @@ class BackupImportSelectionException implements Exception {
   String toString() => 'BackupImportSelectionException: $message';
 }
 
+class BackupImportFileException implements Exception {
+  const BackupImportFileException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => 'BackupImportFileException: $message';
+}
+
 typedef BackupDataReplacer =
     Future<void> Function(Map<String, List<Map<String, dynamic>>> data);
 typedef ReminderReconcileAction = Future<void> Function();
@@ -32,14 +42,27 @@ class BackupService {
   BackupService({
     BackupDataReplacer? replaceAllData,
     ReminderReconcileAction? reconcileReminders,
+    int maxImportBytes = defaultMaxImportBytes,
   }) : _replaceAllData =
            replaceAllData ?? DatabaseHelper.instance.replaceAllData,
        _reconcileReminders =
-           reconcileReminders ?? _reconcileRemindersAfterRestore;
+           reconcileReminders ?? _reconcileRemindersAfterRestore,
+       _maxImportBytes = maxImportBytes {
+    if (maxImportBytes <= 0) {
+      throw ArgumentError.value(
+        maxImportBytes,
+        'maxImportBytes',
+        'must be positive',
+      );
+    }
+  }
+
+  static const defaultMaxImportBytes = 16 * 1024 * 1024;
 
   final _enc = EncryptionService.instance;
   final BackupDataReplacer _replaceAllData;
   final ReminderReconcileAction _reconcileReminders;
+  final int _maxImportBytes;
 
   static Future<void> _reconcileRemindersAfterRestore() {
     return ReminderSyncService.instance.reconcileAll(
@@ -86,7 +109,7 @@ class BackupService {
         'The selected backup file has no readable path.',
       );
     }
-    final content = await File(path).readAsString();
+    final content = await _readImportFile(path);
     final json = await _enc.decryptBackupPayload(content, password);
     final data = _parseBackupPayload(json);
     await _replaceAllData(data);
@@ -96,6 +119,56 @@ class BackupService {
       return BackupImportOutcome.importedWithReminderSyncFailure;
     }
     return BackupImportOutcome.imported;
+  }
+
+  Future<String> _readImportFile(String path) async {
+    RandomAccessFile? handle;
+    try {
+      handle = await File(path).open(mode: FileMode.read);
+      final initialLength = await handle.length();
+      if (initialLength == 0) {
+        throw const BackupImportFileException('Backup file is empty.');
+      }
+      if (initialLength > _maxImportBytes) {
+        throw const BackupImportFileException('Backup file is too large.');
+      }
+
+      final bytes = Uint8List(initialLength);
+      var offset = 0;
+      while (offset < initialLength) {
+        final read = await handle.readInto(bytes, offset, initialLength);
+        if (read == 0) {
+          throw const BackupImportFileException(
+            'Backup file changed while it was being read.',
+          );
+        }
+        offset += read;
+      }
+
+      final extra = await handle.read(1);
+      final finalLength = await handle.length();
+      if (extra.isNotEmpty || finalLength != initialLength) {
+        throw const BackupImportFileException(
+          'Backup file changed while it was being read.',
+        );
+      }
+
+      try {
+        return utf8.decode(bytes, allowMalformed: false);
+      } on FormatException {
+        throw const BackupImportFileException(
+          'Backup file is not valid UTF-8.',
+        );
+      }
+    } on BackupImportFileException {
+      rethrow;
+    } on FileSystemException {
+      throw const BackupImportFileException('Backup file could not be read.');
+    } finally {
+      try {
+        await handle?.close();
+      } catch (_) {}
+    }
   }
 
   Map<String, List<Map<String, dynamic>>> _parseBackupPayload(String json) {
