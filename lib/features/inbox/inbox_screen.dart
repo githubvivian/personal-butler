@@ -372,6 +372,7 @@ class _InboxScreenState extends State<InboxScreen> {
   }
 
   Widget _buildItemCard(ItemModel item) {
+    final needsScheduling = item.startAt == null && !item.isPendingType;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: AppCard(
@@ -405,14 +406,14 @@ class _InboxScreenState extends State<InboxScreen> {
                   color: AppColors.accentOrange,
                 ),
                 const SizedBox(width: 4),
-                const Text(
-                  '待确认',
+                Text(
+                  needsScheduling ? '待安排' : '待确认',
                   style: TextStyle(fontSize: 12, color: AppColors.accentOrange),
                 ),
                 const Spacer(),
                 TextButton(
                   onPressed: () => context.push('/ocr-confirm/${item.id}'),
-                  child: const Text('去确认'),
+                  child: Text(needsScheduling ? '去安排' : '去确认'),
                 ),
               ],
             ),

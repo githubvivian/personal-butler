@@ -57,6 +57,41 @@ void main() {
     });
   });
 
+  group('ItemRepository inbox visibility', () {
+    test('includes unscheduled confirmed non-pending items for recovery', () async {
+      final inbox = _buildItem('inbox-visible').copyWith(inboxStatus: 'inbox');
+      final unscheduled = _buildItem('unscheduled-visible').copyWith(
+        type: 'meeting',
+        startAt: null,
+        endAt: null,
+        inboxStatus: 'confirmed',
+        pendingStatus: null,
+        nextFollowUpAt: null,
+      );
+      final scheduled = _buildItem('scheduled-hidden').copyWith(
+        type: 'meeting',
+        inboxStatus: 'confirmed',
+        pendingStatus: null,
+        nextFollowUpAt: null,
+      );
+      final pending = _buildItem('pending-hidden').copyWith(
+        type: 'task',
+        startAt: null,
+        endAt: null,
+      );
+      for (final item in [inbox, unscheduled, scheduled, pending]) {
+        await database.insert('items', item.toMap());
+      }
+
+      final items = await repository.getInboxItems();
+      final stats = await repository.getTodayStats();
+
+      expect(items, hasLength(2));
+      expect(items.map((item) => item.id), containsAll([inbox.id, unscheduled.id]));
+      expect(stats['inbox'], 2);
+    });
+  });
+
   group('ItemRepository.createOcrDraftWithAttachment', () {
     test('creates one meeting inbox draft and its attachment', () async {
       const ocrText = 'Quarterly planning\nTuesday at 10:00';

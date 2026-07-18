@@ -31,10 +31,17 @@ class ItemRepository extends ChangeNotifier {
 
   Future<List<ItemModel>> getInboxItems() async {
     final db = await _databaseProvider();
+    final pendingPlaceholders = List.filled(
+      pendingItemTypes.length,
+      '?',
+    ).join(',');
     final rows = await db.query(
       'items',
-      where: 'inbox_status = ? AND is_deleted = 0',
-      whereArgs: ['inbox'],
+      where:
+          '(inbox_status = ? OR '
+          '(inbox_status = ? AND start_at IS NULL AND '
+          'type NOT IN ($pendingPlaceholders))) AND is_deleted = 0',
+      whereArgs: ['inbox', 'confirmed', ...pendingItemTypes],
       orderBy: 'created_at DESC',
     );
     return rows.map(ItemModel.fromMap).toList();
@@ -358,14 +365,17 @@ class ItemRepository extends ChangeNotifier {
     final today = DateTime.now();
     final start = DateTime(today.year, today.month, today.day);
     final end = start.add(const Duration(days: 1));
-    final inbox = await db.rawQuery(
-      'SELECT COUNT(*) as c FROM items WHERE inbox_status = ? AND is_deleted = 0',
-      ['inbox'],
-    );
     final pendingPlaceholders = List.filled(
       pendingItemTypes.length,
       '?',
     ).join(',');
+    final inbox = await db.rawQuery(
+      'SELECT COUNT(*) as c FROM items '
+      'WHERE (inbox_status = ? OR '
+      '(inbox_status = ? AND start_at IS NULL AND '
+      'type NOT IN ($pendingPlaceholders))) AND is_deleted = 0',
+      ['inbox', 'confirmed', ...pendingItemTypes],
+    );
     final pending = await db.rawQuery(
       'SELECT COUNT(*) as c FROM items '
       'WHERE type IN ($pendingPlaceholders) AND inbox_status = ? '

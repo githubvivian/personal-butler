@@ -84,6 +84,36 @@ void main() {
     expect(find.textContaining(_sensitiveError), findsNothing);
   });
 
+  testWidgets('Inbox labels recovered unscheduled items as pending scheduling', (
+    tester,
+  ) async {
+    final now = DateTime(2026, 7, 18, 9);
+    final repository = _ScriptedItemRepository()
+      ..inboxResults.add(
+        Future.value([
+          ItemModel(
+            id: 'unscheduled-recovery',
+            type: 'meeting',
+            title: '待补时间事项',
+            inboxStatus: 'confirmed',
+            createdAt: now,
+            updatedAt: now,
+          ),
+        ]),
+      )
+      ..statsResults.add(Future.value({'inbox': 1}));
+
+    await tester.pumpWidget(
+      MaterialApp(home: InboxScreen(itemRepository: repository)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('待补时间事项'), findsOneWidget);
+    expect(find.text('待安排'), findsOneWidget);
+    expect(find.text('去安排'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('Calendar clears the previous day and exposes retry on failure', (
     tester,
   ) async {
