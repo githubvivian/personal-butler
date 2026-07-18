@@ -180,6 +180,15 @@ class _OcrConfirmScreenState extends State<OcrConfirmScreen> {
       notes: _notes.text.trim(),
       startAt: _startAt,
     );
+    if (form.title.isEmpty) {
+      snack(context, '请输入标题');
+      return;
+    }
+    final isPending = isPendingItemType(form.type);
+    if (!isPending && form.startAt == null) {
+      snack(context, '请设置时间');
+      return;
+    }
     setState(() => _saving = true);
 
     final repository = widget.itemRepository ?? context.read<AppState>().items;
@@ -195,7 +204,6 @@ class _OcrConfirmScreenState extends State<OcrConfirmScreen> {
         return;
       }
 
-      final isPending = isPendingItemType(form.type);
       final updated = item.copyWith(
         type: form.type,
         title: form.title,
@@ -301,7 +309,10 @@ class _OcrConfirmScreenState extends State<OcrConfirmScreen> {
         ListTile(
           contentPadding: EdgeInsets.zero,
           title: const Text('时间'),
-          subtitle: Text(_startAt?.toString().substring(0, 16) ?? '未设置'),
+          subtitle: Text(
+            _startAt?.toString().substring(0, 16) ??
+                (isPendingItemType(_type) ? '未设置' : '未设置（必填）'),
+          ),
           trailing: const Icon(Icons.chevron_right),
           onTap: _saving ? null : _pickTime,
         ),

@@ -69,9 +69,13 @@ class _CreateItemScreenState extends State<CreateItemScreen> {
       snack(context, '请输入标题');
       return;
     }
+    final isPending = isPendingItemType(_type);
+    if (!isPending && _startAt == null) {
+      snack(context, '请设置时间');
+      return;
+    }
     setState(() => _saving = true);
     try {
-      final isPending = isPendingItemType(_type);
       final now = DateTime.now();
       final item = ItemModel(
         id: _uuid.v4(),
@@ -144,7 +148,7 @@ class _CreateItemScreenState extends State<CreateItemScreen> {
             ListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('时间'),
-              subtitle: Text(_startAt?.toString().substring(0, 16) ?? '未设置'),
+              subtitle: Text(_startAt?.toString().substring(0, 16) ?? (isPending ? '未设置' : '未设置（必填）')),
               trailing: const Icon(Icons.chevron_right),
               onTap: _pickTime,
             ),

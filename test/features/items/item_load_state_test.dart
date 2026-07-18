@@ -731,7 +731,9 @@ ItemModel _item(
     type: 'meeting',
     title: title ?? 'Test item $id',
     ocrText: ocrText,
-    startAt: startAt,
+    // Save/lifecycle tests use a valid schedule time. Untimed validation is
+    // covered separately by the permission-flow regression tests.
+    startAt: startAt ?? now,
     inboxStatus: 'inbox',
     createdAt: now,
     updatedAt: now,

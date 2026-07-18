@@ -139,6 +139,10 @@ void main() {
     router.push('/create');
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).first, '连点测试');
+    final taskChip = find.widgetWithText(ChoiceChip, '任务');
+    await tester.ensureVisible(taskChip);
+    await tester.tap(taskChip);
+    await tester.pump();
     await _scrollToCreateSave(tester);
     final save = find.byKey(const Key('create-save'));
     await tester.tap(save);
@@ -181,6 +185,10 @@ void main() {
     router.push('/create');
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).first, '失败重试测试');
+    final taskChip = find.widgetWithText(ChoiceChip, '任务');
+    await tester.ensureVisible(taskChip);
+    await tester.tap(taskChip);
+    await tester.pump();
     await _scrollToCreateSave(tester);
     await tester.tap(find.byKey(const Key('create-save')));
     await tester.pumpAndSettle();
@@ -194,9 +202,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('CreateItem does not request for an untimed non-pending item', (
-    tester,
-  ) async {
+  testWidgets('CreateItem rejects an untimed non-pending item', (tester) async {
     final repository = _SpyItemRepository();
     var requests = 0;
     final coordinator = NotificationPermissionCoordinator(
@@ -231,8 +237,95 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(requests, 0);
-    expect(repository.saved, hasLength(1));
-    expect(find.text('已保存'), findsOneWidget);
+    expect(repository.saved, isEmpty);
+    expect(find.text('请设置时间'), findsOneWidget);
+    expect(find.text('host'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('OcrConfirm rejects a blank title before persistence', (
+    tester,
+  ) async {
+    final draft = _item(
+      id: 'ocr-blank-title',
+      type: 'review',
+      inboxStatus: 'inbox',
+      pendingStatus: 'submitted',
+    );
+    final repository = _SpyItemRepository(itemById: draft);
+    var requests = 0;
+    final router = GoRouter(
+      initialLocation: '/ocr',
+      routes: [
+        GoRoute(
+          path: '/ocr',
+          builder: (_, _) => OcrConfirmScreen(
+            itemId: draft.id,
+            itemRepository: repository,
+            notificationPermissionCoordinator:
+                NotificationPermissionCoordinator(
+                  requestPermission: () async {
+                    requests++;
+                    return true;
+                  },
+                ),
+          ),
+        ),
+      ],
+    );
+    addTearDown(router.dispose);
+
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, '   ');
+    await tester.tap(find.widgetWithText(FilledButton, '确认入库'));
+    await tester.pumpAndSettle();
+
+    expect(requests, 0);
+    expect(repository.saved, isEmpty);
+    expect(find.text('请输入标题'), findsOneWidget);
+    expect(find.byType(OcrConfirmScreen), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('OcrConfirm rejects an untimed non-pending item', (tester) async {
+    final draft = _item(
+      id: 'ocr-untimed-meeting',
+      type: 'meeting',
+      inboxStatus: 'inbox',
+    );
+    final repository = _SpyItemRepository(itemById: draft);
+    var requests = 0;
+    final router = GoRouter(
+      initialLocation: '/ocr',
+      routes: [
+        GoRoute(
+          path: '/ocr',
+          builder: (_, _) => OcrConfirmScreen(
+            itemId: draft.id,
+            itemRepository: repository,
+            notificationPermissionCoordinator:
+                NotificationPermissionCoordinator(
+                  requestPermission: () async {
+                    requests++;
+                    return true;
+                  },
+                ),
+          ),
+        ),
+      ],
+    );
+    addTearDown(router.dispose);
+
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, '确认入库'));
+    await tester.pumpAndSettle();
+
+    expect(requests, 0);
+    expect(repository.saved, isEmpty);
+    expect(find.text('请设置时间'), findsOneWidget);
+    expect(find.byType(OcrConfirmScreen), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
