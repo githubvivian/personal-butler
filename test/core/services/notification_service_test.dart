@@ -229,6 +229,35 @@ void main() {
   );
 
   test(
+    'cancel initializes the notification plugin before cancelling',
+    () async {
+      final calls = <MethodCall>[];
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(_timezoneChannel, (_) async {
+        return 'Asia/Shanghai';
+      });
+      messenger.setMockMethodCallHandler(_notificationChannel, (call) async {
+        calls.add(call);
+        if (call.method == 'initialize') return true;
+        return null;
+      });
+
+      await NotificationService.forTesting().cancel(42);
+
+      final methods = calls.map((call) => call.method).toList();
+      expect(methods, contains('initialize'));
+      expect(methods, contains('cancel'));
+      expect(
+        methods.indexOf('initialize'),
+        lessThan(methods.indexOf('cancel')),
+      );
+      final cancelCall = calls.singleWhere((call) => call.method == 'cancel');
+      expect(cancelCall.arguments, <String, Object?>{'id': 42, 'tag': null});
+    },
+  );
+
+  test(
     'requestExactAlarmsPermission delegates only when explicitly called',
     () async {
       final methods = <String>[];
