@@ -4,7 +4,6 @@ import '../database/database_helper.dart';
 import '../models/models.dart';
 import '../security/encryption_service.dart';
 import '../security/session_service.dart';
-import '../services/notification_service.dart';
 import '../services/reminder_sync_service.dart';
 import '../utils/birthday_date_helper.dart';
 
@@ -12,17 +11,23 @@ class BirthdayRepository {
   BirthdayRepository({
     Future<Database> Function()? databaseProvider,
     Future<void> Function(BirthdayModel)? syncBirthdayReminder,
+    Future<void> Function(String)? cancelBirthdayReminders,
     Future<void> Function(int)? cancelNotification,
   }) : _databaseProvider = databaseProvider ?? _defaultDatabaseProvider,
        _syncBirthdayReminder =
            syncBirthdayReminder ?? ReminderSyncService.instance.syncBirthday,
-       _cancelNotification =
-           cancelNotification ?? NotificationService.instance.cancel;
+       _cancelBirthdayReminders =
+           cancelBirthdayReminders ??
+           (cancelNotification == null
+               ? ReminderSyncService.instance.cancelBirthday
+               : null),
+       _cancelNotification = cancelNotification;
 
   final _uuid = const Uuid();
   final Future<Database> Function() _databaseProvider;
   final Future<void> Function(BirthdayModel) _syncBirthdayReminder;
-  final Future<void> Function(int) _cancelNotification;
+  final Future<void> Function(String)? _cancelBirthdayReminders;
+  final Future<void> Function(int)? _cancelNotification;
 
   static Future<Database> _defaultDatabaseProvider() {
     return DatabaseHelper.instance.database;
@@ -89,13 +94,34 @@ class BirthdayRepository {
       where: 'id = ?',
       whereArgs: [id],
     );
-    await _cancelBestEffort(ReminderSyncService.birthdayAdvanceId(id));
-    await _cancelBestEffort(ReminderSyncService.birthdayDayId(id));
+    await _cancelBirthdayRemindersBestEffort(id);
   }
 
-  Future<void> _cancelBestEffort(int notificationId) async {
+  Future<void> _cancelBirthdayRemindersBestEffort(String birthdayId) async {
+    final birthdayCanceller = _cancelBirthdayReminders;
+    if (birthdayCanceller != null) {
+      try {
+        await birthdayCanceller(birthdayId);
+      } catch (_) {}
+      return;
+    }
+    final legacyCanceller = _cancelNotification!;
+    await _cancelBestEffort(
+      legacyCanceller,
+      ReminderSyncService.birthdayAdvanceId(birthdayId),
+    );
+    await _cancelBestEffort(
+      legacyCanceller,
+      ReminderSyncService.birthdayDayId(birthdayId),
+    );
+  }
+
+  Future<void> _cancelBestEffort(
+    Future<void> Function(int) cancelNotification,
+    int notificationId,
+  ) async {
     try {
-      await _cancelNotification(notificationId);
+      await cancelNotification(notificationId);
     } catch (_) {}
   }
 }

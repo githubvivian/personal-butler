@@ -275,5 +275,38 @@ void main() {
         expect(cancelledIds, isEmpty);
       },
     );
+
+    test('softDelete invokes one birthday-level reminder cleanup', () async {
+      const birthdayId = 'birthday-level-soft-delete';
+      final model = BirthdayModel(
+        id: birthdayId,
+        name: 'Riley',
+        relation: 'family',
+        isLunar: false,
+        month: 11,
+        day: 9,
+        createdAt: DateTime.utc(2026, 7, 15),
+      );
+      await database.insert('birthdays', model.toMap());
+      final cleanedBirthdayIds = <String>[];
+      final repository = BirthdayRepository(
+        databaseProvider: () async => database,
+        syncBirthdayReminder: (_) async {},
+        cancelBirthdayReminders: (id) async {
+          cleanedBirthdayIds.add(id);
+          throw StateError('forced birthday-level cleanup failure');
+        },
+      );
+
+      await repository.softDelete(birthdayId);
+
+      expect(cleanedBirthdayIds, [birthdayId]);
+      final rows = await database.query(
+        'birthdays',
+        where: 'id = ?',
+        whereArgs: [birthdayId],
+      );
+      expect(rows.single['is_deleted'], 1);
+    });
   });
 }

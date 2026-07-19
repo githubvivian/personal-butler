@@ -275,6 +275,106 @@ void main() {
     ]);
   });
 
+  test(
+    'queues birthday cancellation after an in-flight reconciliation',
+    () async {
+      final now = DateTime(2026, 7, 19, 8);
+      final birthday = BirthdayModel(
+        id: 'reconcile-then-delete-birthday',
+        name: '待删除生日',
+        isLunar: false,
+        month: 8,
+        day: 20,
+        remindDaysBefore: 3,
+        createdAt: now,
+      );
+      final scheduleStarted = Completer<void>();
+      final releaseSchedule = Completer<void>();
+      final firstCancelStarted = Completer<void>();
+      final events = <String>[];
+      final service = ReminderSyncService(
+        now: () => now,
+        cancelNotification: (id) async {
+          events.add('cancel:$id');
+          if (!firstCancelStarted.isCompleted) firstCancelStarted.complete();
+        },
+        pendingNotificationIds: () async => <int>{},
+        activeNotificationIds: () async => <int>{},
+        scheduleItemReminder:
+            ({
+              required int id,
+              required String title,
+              required String body,
+              required DateTime when,
+            }) async {
+              events.add('item:$id');
+            },
+        scheduleWeakReminder:
+            ({
+              required int id,
+              required String title,
+              required String body,
+              required DateTime when,
+            }) async {
+              events.add('weak:$id');
+              scheduleStarted.complete();
+              await releaseSchedule.future;
+            },
+      );
+
+      final reconcile = service.reconcileAll(
+        items: _EmptyItemRepository(),
+        birthdays: _BirthdayRepository([birthday]),
+      );
+      await scheduleStarted.future;
+      final cancel = service.cancelBirthday(birthday.id);
+      final cancelStartedBeforeRelease = await Future.any<bool>([
+        firstCancelStarted.future.then((_) => true),
+        Future<bool>.delayed(const Duration(milliseconds: 30), () => false),
+      ]);
+
+      expect(cancelStartedBeforeRelease, isFalse);
+      releaseSchedule.complete();
+      await Future.wait([reconcile, cancel]);
+
+      expect(events, [
+        'weak:${ReminderSyncService.birthdayAdvanceId(birthday.id)}',
+        'item:${ReminderSyncService.birthdayDayId(birthday.id)}',
+        'cancel:${ReminderSyncService.birthdayAdvanceId(birthday.id)}',
+        'cancel:${ReminderSyncService.birthdayDayId(birthday.id)}',
+      ]);
+    },
+  );
+
+  test(
+    'cancelBirthday attempts both IDs and preserves the first error',
+    () async {
+      const birthdayId = 'cancel-birthday-first-error';
+      final firstError = StateError('first birthday cancellation failed');
+      final laterError = StateError('later birthday cancellation failed');
+      final cancelled = <int>[];
+      final service = ReminderSyncService(
+        cancelNotification: (id) async {
+          cancelled.add(id);
+          if (id == ReminderSyncService.birthdayAdvanceId(birthdayId)) {
+            throw firstError;
+          }
+          throw laterError;
+        },
+      );
+
+      await expectLater(
+        service.cancelBirthday(birthdayId),
+        throwsA(same(firstError)),
+      );
+
+      expect(cancelled, [
+        ReminderSyncService.birthdayAdvanceId(birthdayId),
+        ReminderSyncService.birthdayDayId(birthdayId),
+      ]);
+    },
+  );
+
   test('a failed queued mutation does not strand later work', () async {
     final first = _pendingItem(
       id: 'queued-failure-first',

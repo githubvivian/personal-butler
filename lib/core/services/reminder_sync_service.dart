@@ -319,6 +319,19 @@ class ReminderSyncService {
     return _enqueue(() => _syncBirthday(b));
   }
 
+  Future<void> cancelBirthday(String birthdayId) {
+    return _enqueue(() => _cancelBirthday(birthdayId));
+  }
+
+  Future<void> _cancelBirthday(String birthdayId) {
+    return _runBestEffort([
+      () => _cancelNotification(
+        ReminderSyncService.birthdayAdvanceId(birthdayId),
+      ),
+      () => _cancelNotification(ReminderSyncService.birthdayDayId(birthdayId)),
+    ]);
+  }
+
   Future<void> _syncBirthday(BirthdayModel b) async {
     final actions = <Future<void> Function()>[
       () => _cancelNotification(birthdayAdvanceId(b.id)),
