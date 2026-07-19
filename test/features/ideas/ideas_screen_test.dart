@@ -218,6 +218,147 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('idea save failure preserves the draft and supports retry', (
+    tester,
+  ) async {
+    const privateMarker = 'private idea persistence marker';
+    final selectedTag = AppConstants.ideaTags[1];
+    var attempts = 0;
+    final repository =
+        _ScriptedIdeaRepository([
+            <IdeaModel>[],
+            [_idea('Retry title', tag: selectedTag)],
+          ])
+          ..onCreate = (title, content, tag) async {
+            attempts++;
+            if (attempts == 1) throw StateError(privateMarker);
+            return _idea(title, tag: tag);
+          };
+
+    await tester.pumpWidget(
+      MaterialApp(home: IdeasScreen(ideaRepository: repository)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.add));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).at(0), '  Retry title  ');
+    await tester.enterText(find.byType(TextField).at(1), 'draft body');
+    tester
+        .widget<DropdownButtonFormField<String>>(
+          find.byType(DropdownButtonFormField<String>),
+        )
+        .onChanged!(selectedTag);
+    await tester.pump();
+
+    await tester.tap(find.widgetWithText(FilledButton, '保存'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('记录灵感'), findsOneWidget);
+    expect(find.text('保存失败，请重试'), findsOneWidget);
+    expect(find.textContaining(privateMarker), findsNothing);
+    expect(
+      tester.widget<TextField>(find.byType(TextField).at(0)).controller?.text,
+      '  Retry title  ',
+    );
+    expect(
+      tester.widget<TextField>(find.byType(TextField).at(1)).controller?.text,
+      'draft body',
+    );
+    expect(repository.createCalls, 1);
+
+    await tester.tap(find.widgetWithText(FilledButton, '保存'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('记录灵感'), findsNothing);
+    expect(find.text('Retry title'), findsOneWidget);
+    expect(repository.createCalls, 2);
+    expect(repository.getAllCalls, 2);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('rapid idea save callbacks persist once', (tester) async {
+    final save = Completer<IdeaModel>();
+    final repository = _ScriptedIdeaRepository([
+      <IdeaModel>[],
+      [_idea('Single idea')],
+    ])..onCreate = (_, _, _) => save.future;
+
+    await tester.pumpWidget(
+      MaterialApp(home: IdeasScreen(ideaRepository: repository)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.add));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, 'Single idea');
+    final saveButton = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, '保存'),
+    );
+
+    saveButton.onPressed!();
+    saveButton.onPressed!();
+    await tester.pump();
+
+    expect(repository.createCalls, 1);
+    expect(
+      tester
+          .widget<FilledButton>(find.widgetWithText(FilledButton, '保存'))
+          .onPressed,
+      isNull,
+    );
+
+    save.complete(_idea('Single idea'));
+    await tester.pumpAndSettle();
+
+    expect(repository.createCalls, 1);
+    expect(find.text('Single idea'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('idea editor cannot write after repository rebind', (
+    tester,
+  ) async {
+    final firstRepository = _ScriptedIdeaRepository([<IdeaModel>[]]);
+    final secondRepository = _ScriptedIdeaRepository([<IdeaModel>[]]);
+    final repository = ValueNotifier<IdeaRepository>(firstRepository);
+    addTearDown(repository.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ValueListenableBuilder<IdeaRepository>(
+          valueListenable: repository,
+          builder: (_, value, _) => IdeasScreen(
+            key: const ValueKey('ideas-screen'),
+            ideaRepository: value,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.add));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, 'stale draft');
+
+    repository.value = secondRepository;
+    await tester.pumpAndSettle();
+    expect(find.text('记录灵感'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilledButton, '保存'));
+    await tester.pumpAndSettle();
+
+    expect(firstRepository.createCalls, 0);
+    expect(secondRepository.createCalls, 0);
+    expect(find.text('保存失败，请重试'), findsOneWidget);
+    expect(
+      tester.widget<TextField>(find.byType(TextField).first).controller?.text,
+      'stale draft',
+    );
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.widgetWithText(TextButton, '取消'));
+    await tester.pumpAndSettle();
+    expect(find.text('记录灵感'), findsNothing);
+  });
+
   testWidgets('idea editor remains usable in a narrow large-text viewport', (
     tester,
   ) async {
@@ -259,6 +400,8 @@ class _ScriptedIdeaRepository extends IdeaRepository {
   final List<Object> _results;
   final List<String?> requestedTags = [];
   final List<({String title, String content, String tag})> created = [];
+  Future<IdeaModel> Function(String title, String content, String tag)?
+  onCreate;
   int getAllCalls = 0;
   int createCalls = 0;
 
@@ -287,6 +430,8 @@ class _ScriptedIdeaRepository extends IdeaRepository {
   }) async {
     createCalls += 1;
     created.add((title: title, content: content, tag: tag));
+    final handler = onCreate;
+    if (handler != null) return handler(title, content, tag);
     return _idea(title, tag: tag);
   }
 }

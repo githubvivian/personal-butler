@@ -23,6 +23,8 @@ class _IdeasScreenState extends State<IdeasScreen> {
   _IdeasLoadStatus _loadStatus = _IdeasLoadStatus.loading;
   bool _hasSnapshot = false;
   int _loadGeneration = 0;
+  int _addGeneration = 0;
+  bool _adding = false;
 
   IdeaRepository get _repository =>
       widget.ideaRepository ?? context.read<AppState>().ideas;
@@ -37,10 +39,19 @@ class _IdeasScreenState extends State<IdeasScreen> {
   void didUpdateWidget(covariant IdeasScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!identical(oldWidget.ideaRepository, widget.ideaRepository)) {
+      _addGeneration += 1;
+      _adding = false;
       _ideas = [];
       _hasSnapshot = false;
       _load();
     }
+  }
+
+  @override
+  void dispose() {
+    _loadGeneration += 1;
+    _addGeneration += 1;
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -79,77 +90,36 @@ class _IdeasScreenState extends State<IdeasScreen> {
   }
 
   Future<void> _add() async {
-    final title = TextEditingController();
-    final content = TextEditingController();
-    String tag = AppConstants.ideaTags.first;
-    String? errorText;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => StatefulBuilder(
-        builder: (context, setLocal) => AlertDialog(
-          title: const Text('记录灵感'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: title,
-                  decoration: const InputDecoration(labelText: '标题'),
-                ),
-                TextField(
-                  controller: content,
-                  maxLines: 4,
-                  decoration: const InputDecoration(labelText: '内容'),
-                ),
-                DropdownButtonFormField<String>(
-                  isExpanded: true,
-                  value: tag,
-                  items: AppConstants.ideaTags
-                      .map((t) => DropdownMenuItem(value: t, child: Text(t)))
-                      .toList(),
-                  onChanged: (v) => setLocal(() => tag = v ?? tag),
-                ),
-                if (errorText != null) ...[
-                  const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      errorText!,
-                      style: const TextStyle(color: AppColors.danger),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () {
-                if (title.text.trim().isEmpty) {
-                  setLocal(() => errorText = '请输入标题');
-                  return;
-                }
-                Navigator.pop(context, true);
-              },
-              child: const Text('保存'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (ok != true || title.text.trim().isEmpty || !mounted) return;
+    if (_adding) return;
+    final generation = ++_addGeneration;
     final repository = _repository;
-    await repository.create(
-      title: title.text.trim(),
-      content: content.text.trim(),
-      tag: tag,
-    );
-    if (!mounted || !identical(repository, _repository)) return;
-    await _load();
+    setState(() => _adding = true);
+    try {
+      final created = await showDialog<bool>(
+        context: context,
+        builder: (_) => _IdeaEditorDialog(
+          onSave: (title, content, tag) async {
+            if (!mounted ||
+                generation != _addGeneration ||
+                !identical(repository, _repository)) {
+              throw const _InactiveIdeaEditor();
+            }
+            await repository.create(title: title, content: content, tag: tag);
+          },
+        ),
+      );
+      if (!mounted ||
+          generation != _addGeneration ||
+          !identical(repository, _repository) ||
+          created != true) {
+        return;
+      }
+      await _load();
+    } finally {
+      if (mounted && generation == _addGeneration) {
+        setState(() => _adding = false);
+      }
+    }
   }
 
   @override
@@ -157,7 +127,12 @@ class _IdeasScreenState extends State<IdeasScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('灵感库'),
-        actions: [IconButton(onPressed: _add, icon: const Icon(Icons.add))],
+        actions: [
+          IconButton(
+            onPressed: _adding ? null : _add,
+            icon: const Icon(Icons.add),
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -292,4 +267,118 @@ class _IdeasScreenState extends State<IdeasScreen> {
       ],
     );
   }
+}
+
+class _IdeaEditorDialog extends StatefulWidget {
+  const _IdeaEditorDialog({required this.onSave});
+
+  final Future<void> Function(String title, String content, String tag) onSave;
+
+  @override
+  State<_IdeaEditorDialog> createState() => _IdeaEditorDialogState();
+}
+
+class _IdeaEditorDialogState extends State<_IdeaEditorDialog> {
+  final _title = TextEditingController();
+  final _content = TextEditingController();
+  String _tag = AppConstants.ideaTags.first;
+  String? _errorText;
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _title.dispose();
+    _content.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_saving) return;
+    final title = _title.text.trim();
+    if (title.isEmpty) {
+      setState(() => _errorText = '请输入标题');
+      return;
+    }
+    final content = _content.text.trim();
+    final tag = _tag;
+    setState(() {
+      _saving = true;
+      _errorText = null;
+    });
+    try {
+      await widget.onSave(title, content, tag);
+      if (!mounted) return;
+      Navigator.pop(context, true);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _errorText = '保存失败，请重试';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: !_saving,
+      child: AlertDialog(
+        title: const Text('记录灵感'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _title,
+                enabled: !_saving,
+                decoration: const InputDecoration(labelText: '标题'),
+              ),
+              TextField(
+                controller: _content,
+                enabled: !_saving,
+                maxLines: 4,
+                decoration: const InputDecoration(labelText: '内容'),
+              ),
+              DropdownButtonFormField<String>(
+                isExpanded: true,
+                value: _tag,
+                items: AppConstants.ideaTags
+                    .map(
+                      (tag) => DropdownMenuItem(value: tag, child: Text(tag)),
+                    )
+                    .toList(),
+                onChanged: _saving
+                    ? null
+                    : (value) => setState(() => _tag = value ?? _tag),
+              ),
+              if (_errorText != null) ...[
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    _errorText!,
+                    style: const TextStyle(color: AppColors.danger),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: _saving ? null : () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: _saving ? null : _save,
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InactiveIdeaEditor implements Exception {
+  const _InactiveIdeaEditor();
 }
