@@ -5,24 +5,29 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 import 'package:uuid/uuid.dart';
 import '../database/database_helper.dart';
 import '../models/models.dart';
-import '../services/notification_service.dart';
 import '../services/reminder_sync_service.dart';
 
 class ItemRepository extends ChangeNotifier {
   ItemRepository({
     Future<Database> Function()? databaseProvider,
     Future<void> Function(ItemModel)? syncItemReminder,
+    Future<void> Function(String)? cancelItemReminders,
     Future<void> Function(int)? cancelNotification,
   }) : _databaseProvider = databaseProvider ?? _defaultDatabaseProvider,
        _syncItemReminder =
            syncItemReminder ?? ReminderSyncService.instance.syncItem,
-       _cancelNotification =
-           cancelNotification ?? NotificationService.instance.cancel;
+       _cancelItemReminders =
+           cancelItemReminders ??
+           (cancelNotification == null
+               ? ReminderSyncService.instance.cancelItem
+               : null),
+       _cancelNotification = cancelNotification;
 
   final _uuid = const Uuid();
   final Future<Database> Function() _databaseProvider;
   final Future<void> Function(ItemModel) _syncItemReminder;
-  final Future<void> Function(int) _cancelNotification;
+  final Future<void> Function(String)? _cancelItemReminders;
+  final Future<void> Function(int)? _cancelNotification;
   final Map<String, Future<void>> _itemMutationTails = {};
 
   static Future<Database> _defaultDatabaseProvider() {
@@ -307,8 +312,7 @@ class ItemRepository extends ChangeNotifier {
         whereArgs: [id],
       );
       if (changed > 0) notifyListeners();
-      await _cancelBestEffort(ReminderSyncService.itemId(id));
-      await _cancelBestEffort(ReminderSyncService.pendingId(id));
+      await _cancelItemRemindersBestEffort(id);
     });
   }
 
@@ -320,8 +324,7 @@ class ItemRepository extends ChangeNotifier {
         return txn.delete('items', where: 'id = ?', whereArgs: [id]);
       });
       if (changed > 0) notifyListeners();
-      await _cancelBestEffort(ReminderSyncService.itemId(id));
-      await _cancelBestEffort(ReminderSyncService.pendingId(id));
+      await _cancelItemRemindersBestEffort(id);
     });
   }
 
@@ -350,9 +353,31 @@ class ItemRepository extends ChangeNotifier {
     } catch (_) {}
   }
 
-  Future<void> _cancelBestEffort(int notificationId) async {
+  Future<void> _cancelItemRemindersBestEffort(String itemId) async {
+    final itemCanceller = _cancelItemReminders;
+    if (itemCanceller != null) {
+      try {
+        await itemCanceller(itemId);
+      } catch (_) {}
+      return;
+    }
+    final legacyCanceller = _cancelNotification!;
+    await _cancelBestEffort(
+      legacyCanceller,
+      ReminderSyncService.itemId(itemId),
+    );
+    await _cancelBestEffort(
+      legacyCanceller,
+      ReminderSyncService.pendingId(itemId),
+    );
+  }
+
+  Future<void> _cancelBestEffort(
+    Future<void> Function(int) cancelNotification,
+    int notificationId,
+  ) async {
     try {
-      await _cancelNotification(notificationId);
+      await cancelNotification(notificationId);
     } catch (_) {}
   }
 

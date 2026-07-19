@@ -263,6 +263,17 @@ class ReminderSyncService {
     return _enqueue(() => _syncItem(item));
   }
 
+  Future<void> cancelItem(String itemId) {
+    return _enqueue(() => _cancelItem(itemId));
+  }
+
+  Future<void> _cancelItem(String itemId) {
+    return _runBestEffort([
+      () => _cancelNotification(ReminderSyncService.itemId(itemId)),
+      () => _cancelNotification(ReminderSyncService.pendingId(itemId)),
+    ]);
+  }
+
   Future<void> _syncItem(ItemModel item) async {
     final actions = <Future<void> Function()>[
       () => _cancelNotification(itemId(item.id)),

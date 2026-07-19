@@ -195,6 +195,86 @@ void main() {
     ]);
   });
 
+  test('queues item cancellation after an in-flight reconciliation', () async {
+    final item = _pendingItem(
+      id: 'reconcile-then-delete',
+      startAt: DateTime.now().add(const Duration(days: 1)),
+      nextFollowUpAt: null,
+    );
+    final scheduleStarted = Completer<void>();
+    final releaseSchedule = Completer<void>();
+    final firstCancelStarted = Completer<void>();
+    final events = <String>[];
+    final service = ReminderSyncService(
+      cancelNotification: (id) async {
+        events.add('cancel:$id');
+        if (!firstCancelStarted.isCompleted) firstCancelStarted.complete();
+      },
+      pendingNotificationIds: () async => <int>{},
+      activeNotificationIds: () async => <int>{},
+      scheduleItemReminder:
+          ({
+            required int id,
+            required String title,
+            required String body,
+            required DateTime when,
+          }) async {
+            events.add('schedule:$id');
+            scheduleStarted.complete();
+            await releaseSchedule.future;
+          },
+      scheduleWeakReminder:
+          ({
+            required int id,
+            required String title,
+            required String body,
+            required DateTime when,
+          }) async {},
+    );
+
+    final reconcile = service.reconcileAll(
+      items: _ItemRepository([item]),
+      birthdays: _EmptyBirthdayRepository(),
+    );
+    await scheduleStarted.future;
+    final cancel = service.cancelItem(item.id);
+    final cancelStartedBeforeRelease = await Future.any<bool>([
+      firstCancelStarted.future.then((_) => true),
+      Future<bool>.delayed(const Duration(milliseconds: 30), () => false),
+    ]);
+
+    expect(cancelStartedBeforeRelease, isFalse);
+    releaseSchedule.complete();
+    await Future.wait([reconcile, cancel]);
+
+    expect(events, [
+      'schedule:${ReminderSyncService.itemId(item.id)}',
+      'cancel:${ReminderSyncService.itemId(item.id)}',
+      'cancel:${ReminderSyncService.pendingId(item.id)}',
+    ]);
+  });
+
+  test('cancelItem attempts both IDs and preserves the first error', () async {
+    const itemId = 'cancel-item-first-error';
+    final firstError = StateError('first cancellation failed');
+    final laterError = StateError('later cancellation failed');
+    final cancelled = <int>[];
+    final service = ReminderSyncService(
+      cancelNotification: (id) async {
+        cancelled.add(id);
+        if (id == ReminderSyncService.itemId(itemId)) throw firstError;
+        throw laterError;
+      },
+    );
+
+    await expectLater(service.cancelItem(itemId), throwsA(same(firstError)));
+
+    expect(cancelled, [
+      ReminderSyncService.itemId(itemId),
+      ReminderSyncService.pendingId(itemId),
+    ]);
+  });
+
   test('a failed queued mutation does not strand later work', () async {
     final first = _pendingItem(
       id: 'queued-failure-first',

@@ -521,6 +521,40 @@ void main() {
         expect(changes, 0);
       },
     );
+
+    test(
+      'soft and hard delete each invoke one item-level reminder cleanup',
+      () async {
+        const softId = 'item-level-soft-delete';
+        const hardId = 'item-level-hard-delete';
+        await database.insert('items', _buildItem(softId).toMap());
+        await database.insert('items', _buildItem(hardId).toMap());
+        final cleanedItemIds = <String>[];
+        final deleteRepository = ItemRepository(
+          databaseProvider: () async => database,
+          syncItemReminder: (_) async {},
+          cancelItemReminders: (itemId) async {
+            cleanedItemIds.add(itemId);
+            throw StateError('forced item-level cleanup failure');
+          },
+        );
+
+        await deleteRepository.softDelete(softId);
+        await deleteRepository.hardDelete(hardId);
+
+        expect(cleanedItemIds, [softId, hardId]);
+        final softRows = await database.query(
+          'items',
+          where: 'id = ?',
+          whereArgs: [softId],
+        );
+        expect(softRows.single['is_deleted'], 1);
+        expect(
+          await database.query('items', where: 'id = ?', whereArgs: [hardId]),
+          isEmpty,
+        );
+      },
+    );
   });
 
   group('ItemRepository reminder projection', () {
