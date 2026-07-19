@@ -198,6 +198,43 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('permission check timeout exposes retry and can recover', (
+    tester,
+  ) async {
+    final permissionResult = Completer<PermissionState>();
+    final plugin = _GalleryPhotoManagerPlugin(
+      permissionStates: [permissionResult.future, PermissionState.authorized],
+      pathResults: [[]],
+    );
+    PhotoManager.withPlugin(plugin);
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: GalleryPickerScreen(loadTimeout: Duration(seconds: 1)),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 2));
+
+    expect(find.text('相册加载失败'), findsOneWidget);
+    expect(find.text('重试'), findsOneWidget);
+    expect(plugin.pathTypes, isEmpty);
+
+    await tester.tap(find.text('重试'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('相册中暂无图片'), findsOneWidget);
+    expect(plugin.permissionOptions, hasLength(2));
+    expect(plugin.pathTypes, hasLength(1));
+
+    permissionResult.complete(PermissionState.denied);
+    await tester.pump();
+
+    expect(find.text('相册中暂无图片'), findsOneWidget);
+    expect(find.text('相册权限已关闭'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('path failure can retry and clears the old error', (
     tester,
   ) async {
@@ -235,6 +272,29 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('path query timeout shows a safe retry state', (tester) async {
+    final pathResult = Completer<List<AssetPathEntity>>();
+    final plugin = _GalleryPhotoManagerPlugin(
+      permissionStates: [PermissionState.authorized],
+      pathResults: [pathResult.future],
+    );
+    PhotoManager.withPlugin(plugin);
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: GalleryPickerScreen(loadTimeout: Duration(seconds: 1)),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 2));
+
+    expect(find.text('相册加载失败'), findsOneWidget);
+    expect(find.text('重试'), findsOneWidget);
+    expect(plugin.pathTypes, [RequestType.image]);
+    expect(plugin.assetPathIds, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('page failure shows a safe retry state', (tester) async {
     final plugin = _GalleryPhotoManagerPlugin(
       permissionStates: [PermissionState.authorized],
@@ -251,6 +311,31 @@ void main() {
     expect(find.text('相册加载失败'), findsOneWidget);
     expect(find.text('重试'), findsOneWidget);
     expect(find.textContaining('private page token'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('first page timeout shows a safe retry state', (tester) async {
+    final assetResult = Completer<List<AssetEntity>>();
+    final plugin = _GalleryPhotoManagerPlugin(
+      permissionStates: [PermissionState.authorized],
+      pathResults: [
+        [_allImagesPath],
+      ],
+      assetResults: [assetResult.future],
+    );
+    PhotoManager.withPlugin(plugin);
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: GalleryPickerScreen(loadTimeout: Duration(seconds: 1)),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 2));
+
+    expect(find.text('相册加载失败'), findsOneWidget);
+    expect(find.text('重试'), findsOneWidget);
+    expect(plugin.assetPathIds, ['all-images']);
     expect(tester.takeException(), isNull);
   });
 

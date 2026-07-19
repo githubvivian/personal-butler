@@ -4,7 +4,12 @@ import '../../core/constants/app_constants.dart';
 import '../../core/utils/photo_permission_helper.dart';
 
 class GalleryPickerScreen extends StatefulWidget {
-  const GalleryPickerScreen({super.key});
+  const GalleryPickerScreen({
+    super.key,
+    this.loadTimeout = const Duration(seconds: 10),
+  });
+
+  final Duration loadTimeout;
 
   @override
   State<GalleryPickerScreen> createState() => _GalleryPickerScreenState();
@@ -36,7 +41,7 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen> {
     try {
       final permissionState = await PhotoManager.getPermissionState(
         requestOption: PhotoPermissionHelper.imagePermissionRequestOption,
-      );
+      ).timeout(widget.loadTimeout);
       if (!mounted) return;
       if (!permissionState.hasAccess) {
         setState(() {
@@ -57,7 +62,7 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen> {
             const OrderOption(type: OrderOptionType.createDate, asc: false),
           ],
         ),
-      );
+      ).timeout(widget.loadTimeout);
       if (!mounted) return;
       if (paths.isEmpty) {
         setState(() {
@@ -68,7 +73,9 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen> {
         return;
       }
       final recent = paths.first;
-      final assets = await recent.getAssetListPaged(page: 0, size: 120);
+      final assets = await recent
+          .getAssetListPaged(page: 0, size: 120)
+          .timeout(widget.loadTimeout);
       if (!mounted) return;
       setState(() {
         _permissionState = permissionState;
