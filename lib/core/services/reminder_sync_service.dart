@@ -27,7 +27,7 @@ typedef ReminderScheduleActionWithPayload =
 
 typedef NotificationIdQuery = Future<Set<int>> Function();
 
-/// 启动时重排所有本地提醒（会议、悬停关注、生日）
+/// 启动时重排所有本地提醒（会议、悬而未决关注、生日）
 class ReminderSyncService {
   ReminderSyncService({
     Future<void> Function(int)? cancelNotification,

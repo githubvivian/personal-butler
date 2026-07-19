@@ -303,7 +303,7 @@ class _SettingsScreenState extends State<SettingsScreen>
       Row(
         children: [
           _miniStat('今日', '${_stats['today'] ?? 0}'),
-          _miniStat('悬停', '${_stats['pending'] ?? 0}'),
+          _miniStat('悬而未决', '${_stats['pending'] ?? 0}'),
           _miniStat('灵感', '${_stats['ideas'] ?? 0}'),
           _miniStat('生日', '${_stats['birthdays'] ?? 0}'),
         ],

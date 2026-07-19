@@ -292,7 +292,7 @@ class _InboxScreenState extends State<InboxScreen> {
             children: [
               _statChip('收件箱', _stats['inbox'] ?? 0, AppColors.primary),
               const SizedBox(width: 8),
-              _statChip('悬停', _stats['pending'] ?? 0, AppColors.accentOrange),
+              _statChip('悬而未决', _stats['pending'] ?? 0, AppColors.accentOrange),
               const SizedBox(width: 8),
               _statChip('今日日程', _stats['today'] ?? 0, AppColors.accentGreen),
             ],

@@ -192,6 +192,33 @@ void main() {
     expect(find.text('第5-10周 · 已设开学日期'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('summary cards use the full pending label consistently', (
+    tester,
+  ) async {
+    final repository = _RefreshItemRepository();
+
+    await tester.pumpWidget(
+      MaterialApp(home: InboxScreen(itemRepository: repository)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('悬而未决'), findsOneWidget);
+    expect(find.text('悬停'), findsNothing);
+
+    final appState = _RefreshAppState(repository);
+    await tester.pumpWidget(
+      ChangeNotifierProvider<AppState>.value(
+        value: appState,
+        child: const MaterialApp(home: SettingsScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('悬而未决'), findsOneWidget);
+    expect(find.text('悬停'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 class _DeferredInboxRepository extends ItemRepository {
