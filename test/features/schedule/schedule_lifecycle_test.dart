@@ -89,6 +89,27 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('MyScheduleScreen lets rows grow for large text', (tester) async {
+    final repository = _ScriptedScheduleRepository()
+      ..entryResults.add(Future.value([_entry('large-text-course')]))
+      ..settingsResults.add(Future.value(_settings()));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MediaQuery(
+          data: const MediaQueryData(textScaler: TextScaler.linear(2)),
+          child: MyScheduleScreen(scheduleRepository: repository),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final table = tester.widget<DataTable>(find.byType(DataTable));
+    expect(table.dataRowMaxHeight, double.infinity);
+    expect(find.textContaining('large-text-course'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'ScheduleSettingsScreen exposes retry after an initial load failure',
     (tester) async {

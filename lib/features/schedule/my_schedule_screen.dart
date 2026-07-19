@@ -404,6 +404,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                   SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
                     child: DataTable(
+                      dataRowMaxHeight: double.infinity,
                       headingRowColor: WidgetStateProperty.all(
                         AppColors.primary.withValues(alpha: 0.08),
                       ),
