@@ -57,7 +57,7 @@ class _CreateItemScreenState extends State<CreateItemScreen> {
       context: context,
       initialTime: TimeOfDay.fromDateTime(_startAt ?? DateTime.now()),
     );
-    if (time == null) return;
+    if (time == null || !mounted) return;
     setState(() {
       _startAt = DateTime(date.year, date.month, date.day, time.hour, time.minute);
     });
