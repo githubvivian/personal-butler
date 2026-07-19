@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
@@ -506,6 +508,99 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('PendingScreen serializes rapid postpone callbacks', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 900);
+    addTearDown(tester.view.resetPhysicalSize);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final mutation = Completer<void>();
+    final repository = _SpyItemRepository(pendingItems: [_activePendingItem()])
+      ..onSave = (_) => mutation.future;
+    final coordinator = NotificationPermissionCoordinator(
+      requestPermission: () async => true,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PendingScreen(
+          itemRepository: repository,
+          notificationPermissionCoordinator: coordinator,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final postponeButton = tester.widget<OutlinedButton>(
+      find.widgetWithText(OutlinedButton, '延期提醒'),
+    );
+
+    postponeButton.onPressed!();
+    postponeButton.onPressed!();
+    await tester.pump();
+
+    expect(repository.saved, hasLength(1));
+    expect(
+      tester
+          .widget<OutlinedButton>(find.widgetWithText(OutlinedButton, '延期提醒'))
+          .onPressed,
+      isNull,
+    );
+    expect(
+      tester
+          .widget<FilledButton>(find.widgetWithText(FilledButton, '更新状态'))
+          .onPressed,
+      isNull,
+    );
+
+    mutation.complete();
+    await tester.pumpAndSettle();
+
+    expect(repository.saved, hasLength(1));
+    expect(
+      tester
+          .widget<OutlinedButton>(find.widgetWithText(OutlinedButton, '延期提醒'))
+          .onPressed,
+      isNotNull,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('PendingScreen contains status persistence failures', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 900);
+    addTearDown(tester.view.resetPhysicalSize);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final repository = _SpyItemRepository(pendingItems: [_activePendingItem()])
+      ..onSave = (_) async {
+        throw StateError('private pending persistence marker');
+      };
+
+    await tester.pumpWidget(
+      MaterialApp(home: PendingScreen(itemRepository: repository)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, '更新状态'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('已完成').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('更新状态失败，请重试'), findsOneWidget);
+    expect(
+      find.textContaining('private pending persistence marker'),
+      findsNothing,
+    );
+    expect(
+      tester
+          .widget<FilledButton>(find.widgetWithText(FilledButton, '更新状态'))
+          .onPressed,
+      isNotNull,
+    );
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'PendingScreen marking a timed item done saves without requesting',

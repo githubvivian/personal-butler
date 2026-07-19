@@ -84,6 +84,8 @@ class _PendingScreenState extends State<PendingScreen>
   DataLoadStatus _loadStatus = DataLoadStatus.loading;
   bool _hasSnapshot = false;
   int _loadGeneration = 0;
+  int _mutationGeneration = 0;
+  final Set<String> _mutatingItemIds = <String>{};
 
   @override
   void initState() {
@@ -105,6 +107,7 @@ class _PendingScreenState extends State<PendingScreen>
   @override
   void dispose() {
     _loadGeneration += 1;
+    _mutationGeneration += 1;
     _repository.removeListener(_handleItemMutation);
     _tab.dispose();
     super.dispose();
@@ -116,6 +119,8 @@ class _PendingScreenState extends State<PendingScreen>
 
   void _bindRepository(ItemRepository repository) {
     if (identical(repository, _repository)) return;
+    _mutationGeneration += 1;
+    _mutatingItemIds.clear();
     _repository.removeListener(_handleItemMutation);
     _repository = repository;
     _repository.addListener(_handleItemMutation);
@@ -178,49 +183,107 @@ class _PendingScreenState extends State<PendingScreen>
         .label;
   }
 
-  PendingReminderActions get _actions => PendingReminderActions(
-    itemRepository: _repository,
-    notificationPermissionCoordinator:
-        widget.notificationPermissionCoordinator ??
-        NotificationPermissionCoordinator.instance,
-  );
+  int? _beginItemMutation(String itemId) {
+    if (!mounted || _mutatingItemIds.contains(itemId)) return null;
+    final generation = _mutationGeneration;
+    setState(() => _mutatingItemIds.add(itemId));
+    return generation;
+  }
+
+  bool _isCurrentItemMutation(
+    String itemId,
+    int generation,
+    ItemRepository repository,
+  ) {
+    return mounted &&
+        generation == _mutationGeneration &&
+        identical(repository, _repository) &&
+        _mutatingItemIds.contains(itemId);
+  }
+
+  void _finishItemMutation(String itemId, int generation) {
+    if (!mounted || generation != _mutationGeneration) return;
+    setState(() => _mutatingItemIds.remove(itemId));
+  }
+
+  PendingReminderActions _actionsFor(ItemRepository repository) {
+    return PendingReminderActions(
+      itemRepository: repository,
+      notificationPermissionCoordinator:
+          widget.notificationPermissionCoordinator ??
+          NotificationPermissionCoordinator.instance,
+    );
+  }
 
   Future<void> _postpone(ItemModel item) async {
-    final permissionResult = await _actions.postpone(item);
-    if (!mounted) return;
-    final warning = permissionResult.warningMessage;
-    if (warning != null) snack(context, warning);
+    final repository = _repository;
+    final generation = _beginItemMutation(item.id);
+    if (generation == null) return;
+    final actions = _actionsFor(repository);
+    try {
+      final permissionResult = await actions.postpone(item);
+      if (!mounted ||
+          !_isCurrentItemMutation(item.id, generation, repository)) {
+        return;
+      }
+      final warning = permissionResult.warningMessage;
+      if (warning != null) snack(context, warning);
+    } catch (_) {
+      if (mounted && _isCurrentItemMutation(item.id, generation, repository)) {
+        snack(context, '延期提醒失败，请重试');
+      }
+    } finally {
+      _finishItemMutation(item.id, generation);
+    }
   }
 
   Future<void> _updateStatus(ItemModel item) async {
-    final statuses = AppConstants.pendingStatuses;
-    final selected = await showModalBottomSheet<String>(
-      context: context,
-      builder: (_) => SafeArea(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.sizeOf(context).height * 0.6,
-          ),
-          child: ListView(
-            shrinkWrap: true,
-            padding: EdgeInsets.zero,
-            children: statuses
-                .map(
-                  (s) => ListTile(
-                    title: Text(s.label),
-                    onTap: () => Navigator.pop(context, s.id),
-                  ),
-                )
-                .toList(),
+    final repository = _repository;
+    final generation = _beginItemMutation(item.id);
+    if (generation == null) return;
+    final actions = _actionsFor(repository);
+    try {
+      final statuses = AppConstants.pendingStatuses;
+      final selected = await showModalBottomSheet<String>(
+        context: context,
+        builder: (sheetContext) => SafeArea(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.6,
+            ),
+            child: ListView(
+              shrinkWrap: true,
+              padding: EdgeInsets.zero,
+              children: statuses
+                  .map(
+                    (s) => ListTile(
+                      title: Text(s.label),
+                      onTap: () => Navigator.pop(sheetContext, s.id),
+                    ),
+                  )
+                  .toList(),
+            ),
           ),
         ),
-      ),
-    );
-    if (selected == null || !mounted) return;
-    final permissionResult = await _actions.updateStatus(item, selected);
-    if (!mounted) return;
-    final warning = permissionResult.warningMessage;
-    if (warning != null) snack(context, warning);
+      );
+      if (selected == null ||
+          !_isCurrentItemMutation(item.id, generation, repository)) {
+        return;
+      }
+      final permissionResult = await actions.updateStatus(item, selected);
+      if (!mounted ||
+          !_isCurrentItemMutation(item.id, generation, repository)) {
+        return;
+      }
+      final warning = permissionResult.warningMessage;
+      if (warning != null) snack(context, warning);
+    } catch (_) {
+      if (mounted && _isCurrentItemMutation(item.id, generation, repository)) {
+        snack(context, '更新状态失败，请重试');
+      }
+    } finally {
+      _finishItemMutation(item.id, generation);
+    }
   }
 
   @override
@@ -296,6 +359,7 @@ class _PendingScreenState extends State<PendingScreen>
 
   Widget _card(ItemModel item) {
     final follow = item.nextFollowUpAt;
+    final isMutating = _mutatingItemIds.contains(item.id);
     final daysLeft = follow == null
         ? null
         : follow.difference(DateTime.now()).inDays;
@@ -359,12 +423,12 @@ class _PendingScreenState extends State<PendingScreen>
             Row(
               children: [
                 OutlinedButton(
-                  onPressed: () => _postpone(item),
+                  onPressed: isMutating ? null : () => _postpone(item),
                   child: const Text('延期提醒'),
                 ),
                 const SizedBox(width: 8),
                 FilledButton.tonal(
-                  onPressed: () => _updateStatus(item),
+                  onPressed: isMutating ? null : () => _updateStatus(item),
                   child: const Text('更新状态'),
                 ),
               ],
