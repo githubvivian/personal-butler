@@ -5,38 +5,155 @@ import 'package:provider/provider.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/models/models.dart';
 import '../../core/providers/app_state.dart';
+import '../../core/repositories/item_repository.dart';
+import '../../core/services/notification_permission_coordinator.dart';
 import '../widgets/common_widgets.dart';
 
+typedef PendingItemBuilder =
+    Widget Function(
+      BuildContext context,
+      ItemModel item,
+      VoidCallback onPostpone,
+      VoidCallback onUpdateStatus,
+    );
+
 class PendingScreen extends StatefulWidget {
-  const PendingScreen({super.key});
+  const PendingScreen({
+    super.key,
+    this.itemRepository,
+    this.notificationPermissionCoordinator,
+    this.itemBuilder,
+  });
+
+  final ItemRepository? itemRepository;
+  final NotificationPermissionCoordinator? notificationPermissionCoordinator;
+  final PendingItemBuilder? itemBuilder;
 
   @override
   State<PendingScreen> createState() => _PendingScreenState();
 }
 
-class _PendingScreenState extends State<PendingScreen> with SingleTickerProviderStateMixin {
+class PendingReminderActions {
+  const PendingReminderActions({
+    required this.itemRepository,
+    required this.notificationPermissionCoordinator,
+  });
+
+  final ItemRepository itemRepository;
+  final NotificationPermissionCoordinator notificationPermissionCoordinator;
+
+  Future<NotificationPermissionResult> postpone(ItemModel item) async {
+    final current = await itemRepository.getById(item.id);
+    if (current == null) return NotificationPermissionResult.notRequired;
+    final nextFollowUpAt = DateTime.now().add(const Duration(days: 7));
+    final updated = current.copyWith(nextFollowUpAt: nextFollowUpAt);
+    return notificationPermissionCoordinator.requestThenPersist(
+      requiresPermission: itemHasActiveReminder(updated),
+      persist: () async {
+        await itemRepository.updatePendingFollowUp(item.id, nextFollowUpAt);
+      },
+    );
+  }
+
+  Future<NotificationPermissionResult> updateStatus(
+    ItemModel item,
+    String selected,
+  ) async {
+    final current = await itemRepository.getById(item.id);
+    if (current == null) return NotificationPermissionResult.notRequired;
+    final status = selected == 'done' ? 'done' : 'active';
+    final updated = current.copyWith(pendingStatus: selected, status: status);
+    return notificationPermissionCoordinator.requestThenPersist(
+      requiresPermission: itemHasActiveReminder(updated),
+      persist: () async {
+        await itemRepository.updatePendingStatus(
+          item.id,
+          pendingStatus: selected,
+          status: status,
+        );
+      },
+    );
+  }
+}
+
+class _PendingScreenState extends State<PendingScreen>
+    with SingleTickerProviderStateMixin {
   late TabController _tab;
+  late ItemRepository _repository;
   List<ItemModel> _items = [];
-  bool _loading = true;
+  DataLoadStatus _loadStatus = DataLoadStatus.loading;
+  bool _hasSnapshot = false;
+  int _loadGeneration = 0;
+  int _mutationGeneration = 0;
+  final Set<String> _mutatingItemIds = <String>{};
 
   @override
   void initState() {
     super.initState();
     _tab = TabController(length: 4, vsync: this);
-    _load();
+    _repository = _resolveRepository();
+    _repository.addListener(_handleItemMutation);
+    _load(resetSnapshot: true);
+  }
+
+  @override
+  void didUpdateWidget(covariant PendingScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.itemRepository != widget.itemRepository) {
+      _bindRepository(_resolveRepository());
+    }
   }
 
   @override
   void dispose() {
+    _loadGeneration += 1;
+    _mutationGeneration += 1;
+    _repository.removeListener(_handleItemMutation);
     _tab.dispose();
     super.dispose();
   }
 
-  Future<void> _load() async {
-    setState(() => _loading = true);
-    final app = context.read<AppState>();
-    _items = await app.items.getPendingItems(includeDone: _tab.index == 3);
-    setState(() => _loading = false);
+  ItemRepository _resolveRepository() {
+    return widget.itemRepository ?? context.read<AppState>().items;
+  }
+
+  void _bindRepository(ItemRepository repository) {
+    if (identical(repository, _repository)) return;
+    _mutationGeneration += 1;
+    _mutatingItemIds.clear();
+    _repository.removeListener(_handleItemMutation);
+    _repository = repository;
+    _repository.addListener(_handleItemMutation);
+    _load(resetSnapshot: true);
+  }
+
+  void _handleItemMutation() => _load();
+
+  Future<void> _load({bool resetSnapshot = false}) async {
+    final generation = ++_loadGeneration;
+    final includeDone = _tab.index == 3;
+    final repository = _repository;
+    if (mounted) {
+      setState(() {
+        if (resetSnapshot) {
+          _items = [];
+          _hasSnapshot = false;
+        }
+        _loadStatus = DataLoadStatus.loading;
+      });
+    }
+    try {
+      final items = await repository.getPendingItems(includeDone: includeDone);
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() {
+        _items = items;
+        _hasSnapshot = true;
+        _loadStatus = DataLoadStatus.ready;
+      });
+    } catch (_) {
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() => _loadStatus = DataLoadStatus.failed);
+    }
   }
 
   List<ItemModel> get _filtered {
@@ -45,7 +162,10 @@ class _PendingScreenState extends State<PendingScreen> with SingleTickerProvider
         return _items.where((i) => i.pendingStatus == 'need_action').toList();
       case 2:
         return _items
-            .where((i) => i.pendingStatus != 'done' && i.pendingStatus != 'need_action')
+            .where(
+              (i) =>
+                  i.pendingStatus != 'done' && i.pendingStatus != 'need_action',
+            )
             .toList();
       case 3:
         return _items.where((i) => i.status == 'done').toList();
@@ -56,43 +176,114 @@ class _PendingScreenState extends State<PendingScreen> with SingleTickerProvider
 
   String _statusLabel(String? id) {
     return AppConstants.pendingStatuses
-        .firstWhere((s) => s.id == id, orElse: () => (id: id ?? '', label: id ?? '未知'))
+        .firstWhere(
+          (s) => s.id == id,
+          orElse: () => (id: id ?? '', label: id ?? '未知'),
+        )
         .label;
   }
 
-  Future<void> _postpone(ItemModel item) async {
-    final app = context.read<AppState>();
-    await app.items.save(
-      item.copyWith(nextFollowUpAt: DateTime.now().add(const Duration(days: 7))),
+  int? _beginItemMutation(String itemId) {
+    if (!mounted || _mutatingItemIds.contains(itemId)) return null;
+    final generation = _mutationGeneration;
+    setState(() => _mutatingItemIds.add(itemId));
+    return generation;
+  }
+
+  bool _isCurrentItemMutation(
+    String itemId,
+    int generation,
+    ItemRepository repository,
+  ) {
+    return mounted &&
+        generation == _mutationGeneration &&
+        identical(repository, _repository) &&
+        _mutatingItemIds.contains(itemId);
+  }
+
+  void _finishItemMutation(String itemId, int generation) {
+    if (!mounted || generation != _mutationGeneration) return;
+    setState(() => _mutatingItemIds.remove(itemId));
+  }
+
+  PendingReminderActions _actionsFor(ItemRepository repository) {
+    return PendingReminderActions(
+      itemRepository: repository,
+      notificationPermissionCoordinator:
+          widget.notificationPermissionCoordinator ??
+          NotificationPermissionCoordinator.instance,
     );
-    _load();
+  }
+
+  Future<void> _postpone(ItemModel item) async {
+    final repository = _repository;
+    final generation = _beginItemMutation(item.id);
+    if (generation == null) return;
+    final actions = _actionsFor(repository);
+    try {
+      final permissionResult = await actions.postpone(item);
+      if (!mounted ||
+          !_isCurrentItemMutation(item.id, generation, repository)) {
+        return;
+      }
+      final warning = permissionResult.warningMessage;
+      if (warning != null) snack(context, warning);
+    } catch (_) {
+      if (mounted && _isCurrentItemMutation(item.id, generation, repository)) {
+        snack(context, '延期提醒失败，请重试');
+      }
+    } finally {
+      _finishItemMutation(item.id, generation);
+    }
   }
 
   Future<void> _updateStatus(ItemModel item) async {
-    final statuses = AppConstants.pendingStatuses;
-    final selected = await showModalBottomSheet<String>(
-      context: context,
-      builder: (_) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: statuses
-              .map((s) => ListTile(
-                    title: Text(s.label),
-                    onTap: () => Navigator.pop(context, s.id),
-                  ))
-              .toList(),
+    final repository = _repository;
+    final generation = _beginItemMutation(item.id);
+    if (generation == null) return;
+    final actions = _actionsFor(repository);
+    try {
+      final statuses = AppConstants.pendingStatuses;
+      final selected = await showModalBottomSheet<String>(
+        context: context,
+        builder: (sheetContext) => SafeArea(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.6,
+            ),
+            child: ListView(
+              shrinkWrap: true,
+              padding: EdgeInsets.zero,
+              children: statuses
+                  .map(
+                    (s) => ListTile(
+                      title: Text(s.label),
+                      onTap: () => Navigator.pop(sheetContext, s.id),
+                    ),
+                  )
+                  .toList(),
+            ),
+          ),
         ),
-      ),
-    );
-    if (selected == null) return;
-    final app = context.read<AppState>();
-    await app.items.save(
-      item.copyWith(
-        pendingStatus: selected,
-        status: selected == 'done' ? 'done' : item.status,
-      ),
-    );
-    _load();
+      );
+      if (selected == null ||
+          !_isCurrentItemMutation(item.id, generation, repository)) {
+        return;
+      }
+      final permissionResult = await actions.updateStatus(item, selected);
+      if (!mounted ||
+          !_isCurrentItemMutation(item.id, generation, repository)) {
+        return;
+      }
+      final warning = permissionResult.warningMessage;
+      if (warning != null) snack(context, warning);
+    } catch (_) {
+      if (mounted && _isCurrentItemMutation(item.id, generation, repository)) {
+        snack(context, '更新状态失败，请重试');
+      }
+    } finally {
+      _finishItemMutation(item.id, generation);
+    }
   }
 
   @override
@@ -103,7 +294,7 @@ class _PendingScreenState extends State<PendingScreen> with SingleTickerProvider
         bottom: TabBar(
           controller: _tab,
           isScrollable: true,
-          onTap: (_) => _load(),
+          onTap: (_) => _load(resetSnapshot: true),
           tabs: const [
             Tab(text: '全部'),
             Tab(text: '待我处理'),
@@ -112,26 +303,63 @@ class _PendingScreenState extends State<PendingScreen> with SingleTickerProvider
           ],
         ),
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
-              onRefresh: _load,
-              child: _filtered.isEmpty
-                  ? ListView(children: const [
-                      SizedBox(height: 80),
-                      Center(child: Text('暂无悬而未决事项')),
-                    ])
-                  : ListView.builder(
-                      padding: const EdgeInsets.all(16),
-                      itemCount: _filtered.length,
-                      itemBuilder: (_, i) => _card(_filtered[i]),
-                    ),
-            ),
+      body: RefreshIndicator(onRefresh: () => _load(), child: _buildBody()),
+    );
+  }
+
+  Widget _buildBody() {
+    if (!_hasSnapshot) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(16),
+        children: [
+          const SizedBox(height: 80),
+          if (_loadStatus == DataLoadStatus.loading)
+            const Center(child: CircularProgressIndicator())
+          else
+            DataLoadFailure(onRetry: () => _load()),
+        ],
+      );
+    }
+
+    final items = _filtered;
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.all(16),
+      children: [
+        if (_loadStatus == DataLoadStatus.loading) ...[
+          const LinearProgressIndicator(),
+          const SizedBox(height: 12),
+        ],
+        if (_loadStatus == DataLoadStatus.failed) ...[
+          DataLoadFailure(onRetry: () => _load()),
+          const SizedBox(height: 12),
+        ],
+        if (items.isEmpty)
+          const Padding(
+            padding: EdgeInsets.only(top: 68),
+            child: Center(child: Text('暂无悬而未决事项')),
+          )
+        else
+          ...items.map((item) {
+            final itemBuilder = widget.itemBuilder;
+            if (itemBuilder != null) {
+              return itemBuilder(
+                context,
+                item,
+                () => _postpone(item),
+                () => _updateStatus(item),
+              );
+            }
+            return _card(item);
+          }),
+      ],
     );
   }
 
   Widget _card(ItemModel item) {
     final follow = item.nextFollowUpAt;
+    final isMutating = _mutatingItemIds.contains(item.id);
     final daysLeft = follow == null
         ? null
         : follow.difference(DateTime.now()).inDays;
@@ -146,18 +374,39 @@ class _PendingScreenState extends State<PendingScreen> with SingleTickerProvider
             Row(
               children: [
                 Expanded(
-                  child: Text(item.title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                  child: Text(
+                    item.title,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ),
                 if (item.amount != null)
-                  Text('¥${item.amount!.toStringAsFixed(2)}',
-                      style: const TextStyle(color: AppColors.accentOrange, fontWeight: FontWeight.bold)),
+                  Text(
+                    '¥${item.amount!.toStringAsFixed(2)}',
+                    style: const TextStyle(
+                      color: AppColors.accentOrange,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
               ],
             ),
             const SizedBox(height: 8),
-            Text('提交：${DateFormat('yyyy-MM-dd').format(item.createdAt)}',
-                style: const TextStyle(color: AppColors.textSecondary, fontSize: 13)),
-            Text('状态：${_statusLabel(item.pendingStatus)}',
-                style: const TextStyle(color: AppColors.textSecondary, fontSize: 13)),
+            Text(
+              '提交：${DateFormat('yyyy-MM-dd').format(item.createdAt)}',
+              style: const TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: 13,
+              ),
+            ),
+            Text(
+              '状态：${_statusLabel(item.pendingStatus)}',
+              style: const TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: 13,
+              ),
+            ),
             if (follow != null)
               Text(
                 daysLeft != null && daysLeft >= 0
@@ -174,12 +423,12 @@ class _PendingScreenState extends State<PendingScreen> with SingleTickerProvider
             Row(
               children: [
                 OutlinedButton(
-                  onPressed: () => _postpone(item),
+                  onPressed: isMutating ? null : () => _postpone(item),
                   child: const Text('延期提醒'),
                 ),
                 const SizedBox(width: 8),
                 FilledButton.tonal(
-                  onPressed: () => _updateStatus(item),
+                  onPressed: isMutating ? null : () => _updateStatus(item),
                   child: const Text('更新状态'),
                 ),
               ],

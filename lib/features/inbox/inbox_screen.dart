@@ -1,102 +1,280 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:photo_manager/photo_manager.dart';
 import 'package:provider/provider.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/models/models.dart';
 import '../../core/providers/app_state.dart';
+import '../../core/repositories/item_repository.dart';
 import '../../core/utils/ocr_service.dart';
+import '../../core/utils/photo_permission_helper.dart';
 import '../widgets/common_widgets.dart';
 import 'gallery_picker_screen.dart';
 
+typedef OcrAssetChooser = Future<String?> Function();
+typedef OcrRecognizer = Future<String> Function(String assetId);
+
 class InboxScreen extends StatefulWidget {
-  const InboxScreen({super.key});
+  const InboxScreen({
+    super.key,
+    this.assetChooser,
+    this.recognizer,
+    this.itemRepository,
+    this.ocrTimeout = OcrService.defaultOperationTimeout,
+  });
+
+  final OcrAssetChooser? assetChooser;
+  final OcrRecognizer? recognizer;
+  final ItemRepository? itemRepository;
+  final Duration ocrTimeout;
 
   @override
   State<InboxScreen> createState() => _InboxScreenState();
 }
 
 class _InboxScreenState extends State<InboxScreen> {
+  static const _photoPermissionHelper = PhotoPermissionHelper();
+
   List<ItemModel> _items = [];
   Map<String, int> _stats = {};
-  bool _loading = true;
+  DataLoadStatus _loadStatus = DataLoadStatus.loading;
+  bool _hasSnapshot = false;
+  bool _ocrInFlight = false;
+  late ItemRepository _repository;
+  int _loadGeneration = 0;
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _repository = _resolveRepository();
+    _repository.addListener(_handleItemMutation);
+    _load(resetSnapshot: true);
   }
 
-  Future<void> _load() async {
-    setState(() => _loading = true);
-    final app = context.read<AppState>();
-    _items = await app.items.getInboxItems();
-    _stats = await app.items.getTodayStats();
-    setState(() => _loading = false);
+  @override
+  void didUpdateWidget(covariant InboxScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.itemRepository != widget.itemRepository) {
+      _bindRepository(_resolveRepository());
+    }
+  }
+
+  @override
+  void dispose() {
+    _loadGeneration += 1;
+    _repository.removeListener(_handleItemMutation);
+    super.dispose();
+  }
+
+  ItemRepository _resolveRepository() {
+    return widget.itemRepository ?? context.read<AppState>().items;
+  }
+
+  void _bindRepository(ItemRepository repository) {
+    if (identical(repository, _repository)) return;
+    _repository.removeListener(_handleItemMutation);
+    _repository = repository;
+    _repository.addListener(_handleItemMutation);
+    _load(resetSnapshot: true);
+  }
+
+  void _handleItemMutation() => _load();
+
+  Future<void> _load({bool resetSnapshot = false}) async {
+    final generation = ++_loadGeneration;
+    final repository = _repository;
+    if (mounted) {
+      setState(() {
+        if (resetSnapshot) {
+          _items = [];
+          _stats = {};
+          _hasSnapshot = false;
+        }
+        _loadStatus = DataLoadStatus.loading;
+      });
+    }
+    try {
+      final items = await repository.getInboxItems();
+      final stats = await repository.getTodayStats();
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() {
+        _items = items;
+        _stats = stats;
+        _hasSnapshot = true;
+        _loadStatus = DataLoadStatus.ready;
+      });
+    } catch (_) {
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() => _loadStatus = DataLoadStatus.failed);
+    }
   }
 
   Future<void> _pickAndOcr() async {
-    final perm = await PhotoManager.requestPermissionExtend();
-    if (!perm.isAuth) {
-      if (mounted) snack(context, '需要相册权限以选择截图');
-      return;
+    if (_ocrInFlight) return;
+
+    final repository = _repository;
+    setState(() => _ocrInFlight = true);
+    OverlayEntry? loadingOverlay;
+
+    try {
+      String? assetId;
+      try {
+        assetId = await (widget.assetChooser ?? _chooseOcrAsset)();
+      } catch (_) {
+        _showOcrMessage('选择图片失败，请重试');
+        return;
+      }
+      if (!mounted || assetId == null) return;
+
+      final overlay = OverlayEntry(
+        builder: (_) => const Stack(
+          fit: StackFit.expand,
+          children: [
+            ModalBarrier(dismissible: false, color: Color(0x66000000)),
+            Center(
+              child: CircularProgressIndicator(key: Key('inbox-ocr-loading')),
+            ),
+          ],
+        ),
+      );
+      Overlay.of(context, rootOverlay: true).insert(overlay);
+      loadingOverlay = overlay;
+
+      late final String text;
+      try {
+        final recognizer =
+            widget.recognizer ?? OcrService.instance.recognizeAsset;
+        text = await recognizer(assetId).timeout(
+          widget.ocrTimeout,
+          onTimeout: () => throw const OcrTimeoutException(),
+        );
+      } on OcrTimeoutException {
+        _showOcrMessage('文字识别超时，请重试');
+        return;
+      } catch (_) {
+        _showOcrMessage('文字识别失败，请重试');
+        return;
+      }
+      if (!mounted) return;
+
+      if (text.trim().isEmpty) {
+        _showOcrMessage('未识别到文字');
+        return;
+      }
+
+      final parsed = OcrParser.parse(text);
+      late final ItemModel draft;
+      try {
+        draft = await repository.createOcrDraftWithAttachment(
+          ocrText: text,
+          assetId: assetId,
+          title: parsed['title'] ?? '会议截图',
+        );
+      } catch (_) {
+        _showOcrMessage('保存识别结果失败，请重试');
+        return;
+      }
+      if (!mounted) return;
+
+      context.push('/ocr-confirm/${draft.id}');
+    } finally {
+      loadingOverlay?.remove();
+      _ocrInFlight = false;
+      if (mounted) setState(() {});
     }
-    final assetId = await Navigator.push<String>(
+  }
+
+  Future<String?> _chooseOcrAsset() async {
+    final perm = await _photoPermissionHelper.requestImagePermission();
+    if (!mounted) return null;
+    if (!_photoPermissionHelper.hasImageAccess(perm)) {
+      await _showPhotoPermissionDialog();
+      return null;
+    }
+    return Navigator.push<String>(
       context,
       MaterialPageRoute(builder: (_) => const GalleryPickerScreen()),
     );
-    if (assetId == null || !mounted) return;
+  }
 
-    showDialog(
+  void _showOcrMessage(String message) {
+    if (!mounted) return;
+    snack(context, message);
+  }
+
+  Future<void> _showPhotoPermissionDialog() async {
+    final shouldOpenSettings = await showDialog<bool>(
       context: context,
-      barrierDismissible: false,
-      builder: (_) => const Center(child: CircularProgressIndicator()),
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('需要相册权限'),
+        content: const Text('选择截图需要访问相册中的图片。您可以前往系统设置开启权限。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('去设置'),
+          ),
+        ],
+      ),
     );
-    final text = await OcrService.instance.recognizeAsset(assetId);
-    if (!mounted) return;
-    Navigator.pop(context);
+    if (!mounted || shouldOpenSettings != true) return;
 
-    final parsed = OcrParser.parse(text);
-    final app = context.read<AppState>();
-    final draft = await app.items.createDraft(
-      type: 'meeting',
-      title: parsed['title'] ?? '会议截图',
-      ocrText: text,
-    );
-    await app.items.addAttachment(
-      itemId: draft.id,
-      assetId: assetId,
-    );
-    if (!mounted) return;
-    context.push('/ocr-confirm/${draft.id}');
-    _load();
+    try {
+      await _photoPermissionHelper.openSettings();
+    } catch (_) {
+      if (!mounted) return;
+      snack(context, '无法打开系统设置，请手动前往应用设置');
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('收件箱')),
-      body: RefreshIndicator(
-        onRefresh: _load,
-        child: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
-                  _buildSummary(),
-                  const SizedBox(height: 16),
-                  _buildQuickActions(),
-                  const SizedBox(height: 20),
-                  const SectionHeader(title: '待处理'),
-                  if (_items.isEmpty)
-                    const AppCard(
-                      child: Text('暂无待处理事项，可通过下方快捷入口添加'),
-                    )
-                  else
-                    ..._items.map(_buildItemCard),
-                ],
-              ),
-      ),
+      body: RefreshIndicator(onRefresh: () => _load(), child: _buildBody()),
+    );
+  }
+
+  Widget _buildBody() {
+    if (!_hasSnapshot) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
+        children: [
+          const SizedBox(height: 120),
+          if (_loadStatus == DataLoadStatus.loading)
+            const Center(child: CircularProgressIndicator())
+          else
+            DataLoadFailure(onRetry: () => _load()),
+        ],
+      );
+    }
+
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      // Leave room for the shell FAB so the last card/action remains reachable.
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
+      children: [
+        if (_loadStatus == DataLoadStatus.loading) ...[
+          const LinearProgressIndicator(),
+          const SizedBox(height: 12),
+        ],
+        if (_loadStatus == DataLoadStatus.failed) ...[
+          DataLoadFailure(onRetry: () => _load()),
+          const SizedBox(height: 12),
+        ],
+        _buildSummary(),
+        const SizedBox(height: 16),
+        _buildQuickActions(),
+        const SizedBox(height: 20),
+        const SectionHeader(title: '待处理'),
+        if (_items.isEmpty)
+          const AppCard(child: Text('暂无待处理事项，可通过下方快捷入口添加'))
+        else
+          ..._items.map(_buildItemCard),
+      ],
     );
   }
 
@@ -114,7 +292,7 @@ class _InboxScreenState extends State<InboxScreen> {
             children: [
               _statChip('收件箱', _stats['inbox'] ?? 0, AppColors.primary),
               const SizedBox(width: 8),
-              _statChip('悬停', _stats['pending'] ?? 0, AppColors.accentOrange),
+              _statChip('悬而未决', _stats['pending'] ?? 0, AppColors.accentOrange),
               const SizedBox(width: 8),
               _statChip('今日日程', _stats['today'] ?? 0, AppColors.accentGreen),
             ],
@@ -134,8 +312,24 @@ class _InboxScreenState extends State<InboxScreen> {
         ),
         child: Column(
           children: [
-            Text('$count', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: color)),
-            Text(label, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+            Text(
+              '$count',
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+                color: color,
+              ),
+            ),
+            Text(
+              label,
+              maxLines: 2,
+              textAlign: TextAlign.center,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 12,
+                color: AppColors.textSecondary,
+              ),
+            ),
           ],
         ),
       ),
@@ -145,15 +339,19 @@ class _InboxScreenState extends State<InboxScreen> {
   Widget _buildQuickActions() {
     return Row(
       children: [
-        _action(Icons.document_scanner, '截图导入', _pickAndOcr),
+        _action(
+          Icons.document_scanner,
+          '截图导入',
+          _ocrInFlight ? null : _pickAndOcr,
+        ),
         _action(Icons.mic_none, '语音', () => context.push('/voice')),
         _action(Icons.edit_note, '快录', () => context.push('/create')),
-        _action(Icons.photo_camera, '拍照识图', _pickAndOcr),
+        _action(Icons.photo_camera, '拍照识图', _ocrInFlight ? null : _pickAndOcr),
       ],
     );
   }
 
-  Widget _action(IconData icon, String label, VoidCallback onTap) {
+  Widget _action(IconData icon, String label, VoidCallback? onTap) {
     return Expanded(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -169,9 +367,20 @@ class _InboxScreenState extends State<InboxScreen> {
             ),
             child: Column(
               children: [
-                Icon(icon, color: AppColors.primary),
+                Icon(
+                  icon,
+                  color: onTap == null
+                      ? AppColors.textSecondary
+                      : AppColors.primary,
+                ),
                 const SizedBox(height: 6),
-                Text(label, style: const TextStyle(fontSize: 12)),
+                Text(
+                  label,
+                  maxLines: 2,
+                  textAlign: TextAlign.center,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12),
+                ),
               ],
             ),
           ),
@@ -181,6 +390,7 @@ class _InboxScreenState extends State<InboxScreen> {
   }
 
   Widget _buildItemCard(ItemModel item) {
+    final needsScheduling = item.startAt == null && !item.isPendingType;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: AppCard(
@@ -189,26 +399,39 @@ class _InboxScreenState extends State<InboxScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(item.title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
+            Text(
+              item.title,
+              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+            ),
             if (item.ocrText != null && item.ocrText!.isNotEmpty) ...[
               const SizedBox(height: 6),
               Text(
                 item.ocrText!.split('\n').first,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
+                style: const TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: 13,
+                ),
               ),
             ],
             const SizedBox(height: 8),
             Row(
               children: [
-                const Icon(Icons.hourglass_empty, size: 14, color: AppColors.accentOrange),
+                const Icon(
+                  Icons.hourglass_empty,
+                  size: 14,
+                  color: AppColors.accentOrange,
+                ),
                 const SizedBox(width: 4),
-                const Text('待确认', style: TextStyle(fontSize: 12, color: AppColors.accentOrange)),
+                Text(
+                  needsScheduling ? '待安排' : '待确认',
+                  style: TextStyle(fontSize: 12, color: AppColors.accentOrange),
+                ),
                 const Spacer(),
                 TextButton(
                   onPressed: () => context.push('/ocr-confirm/${item.id}'),
-                  child: const Text('去确认'),
+                  child: Text(needsScheduling ? '去安排' : '去确认'),
                 ),
               ],
             ),

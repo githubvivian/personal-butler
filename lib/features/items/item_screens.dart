@@ -6,10 +6,19 @@ import 'package:uuid/uuid.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/models/models.dart';
 import '../../core/providers/app_state.dart';
+import '../../core/repositories/item_repository.dart';
+import '../../core/services/notification_permission_coordinator.dart';
 import '../widgets/common_widgets.dart';
 
 class CreateItemScreen extends StatefulWidget {
-  const CreateItemScreen({super.key});
+  const CreateItemScreen({
+    super.key,
+    this.itemRepository,
+    this.notificationPermissionCoordinator,
+  });
+
+  final ItemRepository? itemRepository;
+  final NotificationPermissionCoordinator? notificationPermissionCoordinator;
 
   @override
   State<CreateItemScreen> createState() => _CreateItemScreenState();
@@ -25,6 +34,7 @@ class _CreateItemScreenState extends State<CreateItemScreen> {
   String _owner = AppConstants.ownerSelf;
   DateTime? _startAt;
   int _reminderMinutes = 60;
+  bool _saving = false;
 
   @override
   void dispose() {
@@ -47,45 +57,64 @@ class _CreateItemScreenState extends State<CreateItemScreen> {
       context: context,
       initialTime: TimeOfDay.fromDateTime(_startAt ?? DateTime.now()),
     );
-    if (time == null) return;
+    if (time == null || !mounted) return;
     setState(() {
       _startAt = DateTime(date.year, date.month, date.day, time.hour, time.minute);
     });
   }
 
   Future<void> _save() async {
+    if (_saving) return;
     if (_title.text.trim().isEmpty) {
       snack(context, '请输入标题');
       return;
     }
-    final app = context.read<AppState>();
-    final isPending = _type == 'reimbursement' || _type == 'review';
-    final now = DateTime.now();
-    final item = ItemModel(
-      id: _uuid.v4(),
-      type: _type,
-      title: _title.text.trim(),
-      owner: _owner,
-      startAt: _startAt,
-      location: _location.text.trim().isEmpty ? null : _location.text.trim(),
-      notes: _notes.text.trim().isEmpty ? null : _notes.text.trim(),
-      amount: double.tryParse(_amount.text.trim()),
-      inboxStatus: 'confirmed',
-      pendingStatus: isPending ? 'submitted' : null,
-      nextFollowUpAt: isPending ? now.add(const Duration(days: 7)) : null,
-      reminderMinutes: _reminderMinutes,
-      createdAt: now,
-      updatedAt: now,
-    );
-    await app.items.save(item);
-    if (!mounted) return;
-    snack(context, '已保存');
-    context.pop();
+    final isPending = isPendingItemType(_type);
+    if (!isPending && _startAt == null) {
+      snack(context, '请设置时间');
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      final now = DateTime.now();
+      final item = ItemModel(
+        id: _uuid.v4(),
+        type: _type,
+        title: _title.text.trim(),
+        owner: _owner,
+        startAt: _startAt,
+        location: _location.text.trim().isEmpty ? null : _location.text.trim(),
+        notes: _notes.text.trim().isEmpty ? null : _notes.text.trim(),
+        amount: double.tryParse(_amount.text.trim()),
+        inboxStatus: 'confirmed',
+        pendingStatus: isPending ? 'submitted' : null,
+        nextFollowUpAt: isPending ? now.add(const Duration(days: 7)) : null,
+        reminderMinutes: _reminderMinutes,
+        createdAt: now,
+        updatedAt: now,
+      );
+      final repository =
+          widget.itemRepository ?? context.read<AppState>().items;
+      final permissionResult =
+          await (widget.notificationPermissionCoordinator ??
+                  NotificationPermissionCoordinator.instance)
+              .requestThenPersist(
+                requiresPermission: itemHasActiveReminder(item),
+                persist: () => repository.save(item),
+              );
+      if (!mounted) return;
+      snack(context, permissionResult.warningMessage ?? '已保存');
+      context.pop();
+    } catch (_) {
+      if (mounted) snack(context, '保存失败，请重试');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final isPending = _type == 'reimbursement' || _type == 'review';
+    final isPending = isPendingItemType(_type);
     return Scaffold(
       appBar: AppBar(title: const Text('创建事项')),
       body: ListView(
@@ -119,7 +148,7 @@ class _CreateItemScreenState extends State<CreateItemScreen> {
             ListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('时间'),
-              subtitle: Text(_startAt?.toString().substring(0, 16) ?? '未设置'),
+              subtitle: Text(_startAt?.toString().substring(0, 16) ?? (isPending ? '未设置' : '未设置（必填）')),
               trailing: const Icon(Icons.chevron_right),
               onTap: _pickTime,
             ),
@@ -148,16 +177,34 @@ class _CreateItemScreenState extends State<CreateItemScreen> {
             onChanged: (v) => setState(() => _reminderMinutes = v ?? 60),
           ),
           const SizedBox(height: 24),
-          FilledButton(onPressed: _save, child: const Text('保存')),
+          FilledButton(
+            key: const Key('create-save'),
+            onPressed: _saving ? null : _save,
+            child: _saving
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('保存'),
+          ),
         ],
       ),
     );
   }
 }
 
+enum _ItemDetailLoadState { loading, ready, notFound, failed }
+
 class ItemDetailScreen extends StatefulWidget {
   final String itemId;
-  const ItemDetailScreen({super.key, required this.itemId});
+  final ItemRepository? itemRepository;
+
+  const ItemDetailScreen({
+    super.key,
+    required this.itemId,
+    this.itemRepository,
+  });
 
   @override
   State<ItemDetailScreen> createState() => _ItemDetailScreenState();
@@ -165,6 +212,9 @@ class ItemDetailScreen extends StatefulWidget {
 
 class _ItemDetailScreenState extends State<ItemDetailScreen> {
   ItemModel? _item;
+  _ItemDetailLoadState _loadState = _ItemDetailLoadState.loading;
+  int _loadGeneration = 0;
+  bool _deleting = false;
 
   @override
   void initState() {
@@ -172,67 +222,147 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
     _load();
   }
 
+  @override
+  void didUpdateWidget(covariant ItemDetailScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.itemId != widget.itemId ||
+        oldWidget.itemRepository != widget.itemRepository) {
+      _load();
+    }
+  }
+
   Future<void> _load() async {
-    _item = await context.read<AppState>().items.getById(widget.itemId);
-    setState(() {});
+    final generation = ++_loadGeneration;
+    final itemId = widget.itemId;
+    final repository = widget.itemRepository ?? context.read<AppState>().items;
+    setState(() {
+      _item = null;
+      _loadState = _ItemDetailLoadState.loading;
+    });
+    try {
+      final item = await repository.getById(itemId);
+      if (!_isCurrentLoad(generation, itemId)) return;
+      setState(() {
+        _item = item;
+        _loadState = item == null
+            ? _ItemDetailLoadState.notFound
+            : _ItemDetailLoadState.ready;
+      });
+    } catch (_) {
+      if (!_isCurrentLoad(generation, itemId)) return;
+      setState(() {
+        _item = null;
+        _loadState = _ItemDetailLoadState.failed;
+      });
+    }
+  }
+
+  bool _isCurrentLoad(int generation, String itemId) {
+    return mounted && generation == _loadGeneration && widget.itemId == itemId;
   }
 
   Future<void> _delete() async {
-    final action = await ConfirmDeleteDialog.show(
-      context,
-      title: '删除事项',
-      message: '移入已删除可保留记录；彻底删除不可恢复。相册原图不会被删除。',
-    );
-    if (action == null) return;
-    final app = context.read<AppState>();
-    if (action == 'hard') {
-      await app.items.hardDelete(widget.itemId);
-    } else {
-      await app.items.softDelete(widget.itemId);
+    final item = _item;
+    final itemId = widget.itemId;
+    final generation = _loadGeneration;
+    if (_deleting ||
+        _loadState != _ItemDetailLoadState.ready ||
+        item?.id != itemId) {
+      return;
     }
-    if (!mounted) return;
-    context.pop();
+    final repository = widget.itemRepository ?? context.read<AppState>().items;
+    setState(() => _deleting = true);
+    try {
+      final action = await ConfirmDeleteDialog.show(
+        context,
+        title: '删除事项',
+        message: '移入已删除可保留记录；彻底删除不可恢复。相册原图不会被删除。',
+      );
+      if (action == null ||
+          !_isCurrentLoad(generation, itemId) ||
+          _loadState != _ItemDetailLoadState.ready ||
+          _item?.id != itemId) {
+        return;
+      }
+      if (action == 'hard') {
+        await repository.hardDelete(itemId);
+      } else {
+        await repository.softDelete(itemId);
+      }
+      if (!mounted || !_isCurrentLoad(generation, itemId)) return;
+      context.pop();
+    } catch (_) {
+      if (!mounted || !_isCurrentLoad(generation, itemId)) return;
+      snack(context, '删除事项失败，请重试');
+    } finally {
+      if (mounted) {
+        setState(() => _deleting = false);
+      } else {
+        _deleting = false;
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_item == null) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
-    final item = _item!;
     return Scaffold(
       appBar: AppBar(
         title: const Text('事项详情'),
-        actions: [
-          IconButton(onPressed: _delete, icon: const Icon(Icons.delete_outline)),
-        ],
+        actions: _loadState == _ItemDetailLoadState.ready
+            ? [
+                IconButton(
+                  onPressed: _deleting ? null : _delete,
+                  icon: const Icon(Icons.delete_outline),
+                ),
+              ]
+            : null,
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          AppCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(item.title, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
-                OwnerChip(ownerId: item.owner),
-                const SizedBox(height: 16),
-                _row(Icons.category, '类型', AppConstants.itemTypes.firstWhere((t) => t.id == item.type, orElse: () => (id: item.type, label: item.type, icon: Icons.label)).label),
-                if (item.startAt != null)
-                  _row(Icons.access_time, '时间', DateFormat('yyyy-MM-dd HH:mm').format(item.startAt!)),
-                if (item.location != null) _row(Icons.place, '地点', item.location!),
-                if (item.participants != null) _row(Icons.people, '参与人', item.participants!),
-                if (item.amount != null) _row(Icons.payments, '金额', '¥${item.amount!.toStringAsFixed(2)}'),
-                if (item.pendingStatus != null)
-                  _row(Icons.pending, '流程状态', AppConstants.pendingStatuses.firstWhere((s) => s.id == item.pendingStatus, orElse: () => (id: item.pendingStatus!, label: item.pendingStatus!)).label),
-                if (item.notes != null) _row(Icons.notes, '备注', item.notes!),
-                _row(Icons.notifications, '提醒', '提前 ${item.reminderMinutes} 分钟'),
-              ],
-            ),
+      body: switch (_loadState) {
+        _ItemDetailLoadState.loading => const Center(
+          child: CircularProgressIndicator(),
+        ),
+        _ItemDetailLoadState.notFound => const Center(child: Text('事项不存在或已删除')),
+        _ItemDetailLoadState.failed => Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('事项加载失败，请重试'),
+              const SizedBox(height: 12),
+              FilledButton(onPressed: _load, child: const Text('重试')),
+            ],
           ),
-        ],
-      ),
+        ),
+        _ItemDetailLoadState.ready => _buildReady(_item!),
+      },
+    );
+  }
+
+  Widget _buildReady(ItemModel item) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        AppCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(item.title, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              OwnerChip(ownerId: item.owner),
+              const SizedBox(height: 16),
+              _row(Icons.category, '类型', AppConstants.itemTypes.firstWhere((t) => t.id == item.type, orElse: () => (id: item.type, label: item.type, icon: Icons.label)).label),
+              if (item.startAt != null)
+                _row(Icons.access_time, '时间', DateFormat('yyyy-MM-dd HH:mm').format(item.startAt!)),
+              if (item.location != null) _row(Icons.place, '地点', item.location!),
+              if (item.participants != null) _row(Icons.people, '参与人', item.participants!),
+              if (item.amount != null) _row(Icons.payments, '金额', '¥${item.amount!.toStringAsFixed(2)}'),
+              if (item.pendingStatus != null)
+                _row(Icons.pending, '流程状态', AppConstants.pendingStatuses.firstWhere((s) => s.id == item.pendingStatus, orElse: () => (id: item.pendingStatus!, label: item.pendingStatus!)).label),
+              if (item.notes != null) _row(Icons.notes, '备注', item.notes!),
+              _row(Icons.notifications, '提醒', '提前 ${item.reminderMinutes} 分钟'),
+            ],
+          ),
+        ),
+      ],
     );
   }
 

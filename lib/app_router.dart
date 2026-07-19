@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'core/providers/app_state.dart';
+import 'core/services/notification_navigation_controller.dart';
 import 'features/auth/lock_screen.dart';
+import 'features/auth/startup_screen.dart';
 import 'features/birthday/birthday_screen.dart';
 import 'features/calendar/calendar_screen.dart';
 import 'features/family/child_detail_screen.dart';
@@ -21,19 +23,55 @@ import 'features/vault/vault_screen.dart';
 
 final _rootKey = GlobalKey<NavigatorState>();
 
-GoRouter createRouter(AppState appState) {
+GoRouter createRouter(
+  AppState appState, {
+  NotificationNavigationController? notificationNavigation,
+}) {
+  final navigation =
+      notificationNavigation ?? NotificationNavigationController.instance;
   return GoRouter(
     navigatorKey: _rootKey,
-    refreshListenable: appState,
+    refreshListenable: Listenable.merge([appState, navigation]),
     redirect: (context, state) {
-      if (appState.loading) return null;
+      final location = state.matchedLocation;
+      final onLoading = location == '/loading';
+      final onStartupError = location == '/startup-error';
+
+      if (appState.loading) return onLoading ? null : '/loading';
+      if (appState.bootstrapError != null) {
+        return onStartupError ? null : '/startup-error';
+      }
+      if (!appState.loading &&
+          appState.bootstrapError == null &&
+          appState.unlocked) {
+        final pendingLocation = navigation.pendingLocation;
+        if (pendingLocation != null) {
+          if (pendingLocation == location) {
+            navigation.markLocationReached(location);
+          } else {
+            return pendingLocation;
+          }
+        }
+      }
+      if (onLoading || onStartupError) {
+        return appState.unlocked ? '/inbox' : '/lock';
+      }
+
       final onLock = state.matchedLocation == '/lock';
       if (!appState.unlocked && !onLock) return '/lock';
       if (appState.unlocked && onLock) return '/inbox';
       return null;
     },
-    initialLocation: '/inbox',
+    initialLocation: '/loading',
     routes: [
+      GoRoute(
+        path: '/loading',
+        builder: (_, _) => const StartupLoadingScreen(),
+      ),
+      GoRoute(
+        path: '/startup-error',
+        builder: (_, _) => StartupErrorScreen(onRetry: appState.bootstrap),
+      ),
       GoRoute(path: '/lock', builder: (_, __) => const LockScreen()),
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) =>

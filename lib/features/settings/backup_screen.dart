@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/providers/app_state.dart';
@@ -7,7 +6,9 @@ import '../../core/services/backup_service.dart';
 import '../widgets/common_widgets.dart';
 
 class BackupScreen extends StatefulWidget {
-  const BackupScreen({super.key});
+  const BackupScreen({super.key, this.backupService});
+
+  final BackupService? backupService;
 
   @override
   State<BackupScreen> createState() => _BackupScreenState();
@@ -15,8 +16,15 @@ class BackupScreen extends StatefulWidget {
 
 class _BackupScreenState extends State<BackupScreen> {
   final _password = TextEditingController();
-  final _backup = BackupService();
+  late final BackupService _backup;
+  bool _operationActive = false;
   bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _backup = widget.backupService ?? BackupService();
+  }
 
   @override
   void dispose() {
@@ -25,47 +33,73 @@ class _BackupScreenState extends State<BackupScreen> {
   }
 
   Future<void> _export() async {
+    if (_operationActive) return;
     if (_password.text.length < 6) {
       snack(context, '备份密码至少6位');
       return;
     }
+    final password = _password.text;
+    _operationActive = true;
     setState(() => _busy = true);
     try {
-      await _backup.shareBackup(_password.text);
+      await _backup.shareBackup(password);
       if (mounted) snack(context, '加密备份已生成，请保存到安全位置');
-    } catch (e) {
-      if (mounted) snack(context, '备份失败：$e');
+    } catch (_) {
+      if (mounted) snack(context, '备份失败，请稍后重试');
     } finally {
+      _operationActive = false;
       if (mounted) setState(() => _busy = false);
     }
   }
 
   Future<void> _import() async {
+    if (_operationActive) return;
     if (_password.text.length < 6) {
       snack(context, '请输入备份时设置的密码');
       return;
     }
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('恢复备份'),
-        content: const Text('恢复将覆盖当前全部数据，是否继续？'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('继续')),
-        ],
-      ),
-    );
-    if (confirm != true) return;
-    setState(() => _busy = true);
+    final password = _password.text;
+    _operationActive = true;
     try {
-      await _backup.importEncryptedBackup(_password.text);
-      if (mounted) snack(context, '恢复成功');
-      context.read<AppState>().refresh();
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('恢复备份'),
+          content: const Text(
+            '恢复将覆盖当前全部数据库记录。若备份来自卸载前、清除应用数据前或其他设备，'
+            '密码保险库内容可能无法解密；相册原图不会恢复。是否继续？',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('继续'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted || confirm != true) return;
+      setState(() => _busy = true);
+      final appState = context.read<AppState>();
+      final outcome = await _backup.importEncryptedBackup(password);
+      if (outcome == BackupImportOutcome.cancelled) return;
+      appState.items.invalidateAfterExternalWrite();
+      appState.refresh();
+      if (!mounted) return;
+      if (outcome == BackupImportOutcome.importedWithReminderSyncFailure) {
+        snack(context, '数据库记录已恢复，但事项和生日提醒重新同步失败，请稍后重试');
+      } else {
+        snack(context, '数据库记录已恢复；请核对保险库和相册引用');
+      }
     } catch (e) {
-      if (mounted) snack(context, '恢复失败，请检查密码与文件');
+      if (!mounted) return;
+      snack(context, '恢复失败，请检查密码与文件');
     } finally {
-      if (mounted) setState(() => _busy = false);
+      _operationActive = false;
+      if (mounted && _busy) setState(() => _busy = false);
     }
   }
 
@@ -78,7 +112,8 @@ class _BackupScreenState extends State<BackupScreen> {
         children: [
           const AppCard(
             child: Text(
-              '备份文件使用 AES 加密，扩展名 .pbak。请妥善保管备份密码，丢失将无法恢复。',
+              '当前 .pbak 仅备份数据库记录，不包含相册原图。密码保险库密文字段依赖本机安全密钥，'
+              '卸载应用、清除应用数据或换机后可能无法解密。请勿将其视为完整换机或灾难恢复备份。',
               style: TextStyle(color: AppColors.textSecondary),
             ),
           ),
@@ -100,10 +135,11 @@ class _BackupScreenState extends State<BackupScreen> {
             icon: const Icon(Icons.download),
             label: const Text('从备份恢复'),
           ),
-          if (_busy) const Padding(
-            padding: EdgeInsets.only(top: 24),
-            child: Center(child: CircularProgressIndicator()),
-          ),
+          if (_busy)
+            const Padding(
+              padding: EdgeInsets.only(top: 24),
+              child: Center(child: CircularProgressIndicator()),
+            ),
         ],
       ),
     );

@@ -1,26 +1,64 @@
+const _copyWithUnset = _CopyWithUnset();
+
+final class _CopyWithUnset {
+  const _CopyWithUnset();
+}
+
+T? _copyWithNullable<T>(Object? value, T? current) {
+  return identical(value, _copyWithUnset) ? current : value as T?;
+}
+
 DateTime? _parseModelDate(dynamic value) {
   if (value == null) return null;
   return DateTime.parse(value as String);
 }
 
-class ItemModel {
+const pendingItemTypes = <String>['task', 'reimbursement', 'review'];
+
+bool isPendingItemType(String type) => pendingItemTypes.contains(type);
+
+abstract interface class ReminderItemView {
+  String get id;
+  String get type;
+  String get title;
+  DateTime? get startAt;
+  String? get location;
+  String get status;
+  String get inboxStatus;
+  DateTime? get nextFollowUpAt;
+  int get reminderMinutes;
+  bool get isDeleted;
+  bool get isPendingType;
+}
+
+class ItemModel implements ReminderItemView {
+  @override
   final String id;
+  @override
   final String type;
+  @override
   final String title;
   final String? description;
   final String owner;
+  @override
   final DateTime? startAt;
   final DateTime? endAt;
+  @override
   final String? location;
   final String? participants;
+  @override
   final String status;
+  @override
   final String inboxStatus;
   final String? pendingStatus;
+  @override
   final DateTime? nextFollowUpAt;
   final double? amount;
   final String? ocrText;
   final String? notes;
+  @override
   final int reminderMinutes;
+  @override
   final bool isDeleted;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -48,26 +86,27 @@ class ItemModel {
     required this.updatedAt,
   });
 
-  bool get isPendingType => type == 'reimbursement' || type == 'review';
+  @override
+  bool get isPendingType => isPendingItemType(type);
   bool get isInbox => inboxStatus == 'inbox';
   bool get isSoftDeleted => isDeleted;
 
   ItemModel copyWith({
     String? type,
     String? title,
-    String? description,
+    Object? description = _copyWithUnset,
     String? owner,
-    DateTime? startAt,
-    DateTime? endAt,
-    String? location,
-    String? participants,
+    Object? startAt = _copyWithUnset,
+    Object? endAt = _copyWithUnset,
+    Object? location = _copyWithUnset,
+    Object? participants = _copyWithUnset,
     String? status,
     String? inboxStatus,
-    String? pendingStatus,
-    DateTime? nextFollowUpAt,
-    double? amount,
-    String? ocrText,
-    String? notes,
+    Object? pendingStatus = _copyWithUnset,
+    Object? nextFollowUpAt = _copyWithUnset,
+    Object? amount = _copyWithUnset,
+    Object? ocrText = _copyWithUnset,
+    Object? notes = _copyWithUnset,
     int? reminderMinutes,
     bool? isDeleted,
     DateTime? updatedAt,
@@ -76,19 +115,19 @@ class ItemModel {
       id: id,
       type: type ?? this.type,
       title: title ?? this.title,
-      description: description ?? this.description,
+      description: _copyWithNullable(description, this.description),
       owner: owner ?? this.owner,
-      startAt: startAt ?? this.startAt,
-      endAt: endAt ?? this.endAt,
-      location: location ?? this.location,
-      participants: participants ?? this.participants,
+      startAt: _copyWithNullable(startAt, this.startAt),
+      endAt: _copyWithNullable(endAt, this.endAt),
+      location: _copyWithNullable(location, this.location),
+      participants: _copyWithNullable(participants, this.participants),
       status: status ?? this.status,
       inboxStatus: inboxStatus ?? this.inboxStatus,
-      pendingStatus: pendingStatus ?? this.pendingStatus,
-      nextFollowUpAt: nextFollowUpAt ?? this.nextFollowUpAt,
-      amount: amount ?? this.amount,
-      ocrText: ocrText ?? this.ocrText,
-      notes: notes ?? this.notes,
+      pendingStatus: _copyWithNullable(pendingStatus, this.pendingStatus),
+      nextFollowUpAt: _copyWithNullable(nextFollowUpAt, this.nextFollowUpAt),
+      amount: _copyWithNullable(amount, this.amount),
+      ocrText: _copyWithNullable(ocrText, this.ocrText),
+      notes: _copyWithNullable(notes, this.notes),
       reminderMinutes: reminderMinutes ?? this.reminderMinutes,
       isDeleted: isDeleted ?? this.isDeleted,
       createdAt: createdAt,
@@ -144,6 +183,80 @@ class ItemModel {
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
     };
+  }
+}
+
+/// The columns needed to rebuild notifications without loading OCR or notes.
+class ReminderItemSnapshot implements ReminderItemView {
+  const ReminderItemSnapshot({
+    required this.id,
+    required this.type,
+    required this.title,
+    this.startAt,
+    this.location,
+    this.status = 'active',
+    this.inboxStatus = 'confirmed',
+    this.nextFollowUpAt,
+    this.reminderMinutes = 60,
+    this.isDeleted = false,
+    required this.updatedAt,
+  });
+
+  @override
+  final String id;
+  @override
+  final String type;
+  @override
+  final String title;
+  @override
+  final DateTime? startAt;
+  @override
+  final String? location;
+  @override
+  final String status;
+  @override
+  final String inboxStatus;
+  @override
+  final DateTime? nextFollowUpAt;
+  @override
+  final int reminderMinutes;
+  @override
+  final bool isDeleted;
+  final DateTime updatedAt;
+
+  @override
+  bool get isPendingType => isPendingItemType(type);
+
+  factory ReminderItemSnapshot.fromMap(Map<String, dynamic> map) {
+    return ReminderItemSnapshot(
+      id: map['id'] as String,
+      type: map['type'] as String,
+      title: map['title'] as String,
+      startAt: _parseModelDate(map['start_at']),
+      location: map['location'] as String?,
+      status: map['status'] as String? ?? 'active',
+      inboxStatus: map['inbox_status'] as String? ?? 'confirmed',
+      nextFollowUpAt: _parseModelDate(map['next_follow_up_at']),
+      reminderMinutes: map['reminder_minutes'] as int? ?? 60,
+      isDeleted: (map['is_deleted'] as int? ?? 0) == 1,
+      updatedAt: DateTime.parse(map['updated_at'] as String),
+    );
+  }
+
+  factory ReminderItemSnapshot.fromItem(ItemModel item) {
+    return ReminderItemSnapshot(
+      id: item.id,
+      type: item.type,
+      title: item.title,
+      startAt: item.startAt,
+      location: item.location,
+      status: item.status,
+      inboxStatus: item.inboxStatus,
+      nextFollowUpAt: item.nextFollowUpAt,
+      reminderMinutes: item.reminderMinutes,
+      isDeleted: item.isDeleted,
+      updatedAt: item.updatedAt,
+    );
   }
 }
 
@@ -278,12 +391,12 @@ class ScheduleEntryModel {
     int? weekday,
     String? startTime,
     String? endTime,
-    String? location,
+    Object? location = _copyWithUnset,
     int? startWeek,
     int? endWeek,
     String? repeatMode,
-    String? weekPattern,
-    String? customWeeks,
+    Object? weekPattern = _copyWithUnset,
+    Object? customWeeks = _copyWithUnset,
     bool? isDeleted,
     DateTime? createdAt,
   }) {
@@ -294,12 +407,12 @@ class ScheduleEntryModel {
       weekday: weekday ?? this.weekday,
       startTime: startTime ?? this.startTime,
       endTime: endTime ?? this.endTime,
-      location: location ?? this.location,
+      location: _copyWithNullable(location, this.location),
       startWeek: startWeek ?? this.startWeek,
       endWeek: endWeek ?? this.endWeek,
       repeatMode: repeatMode ?? this.repeatMode,
-      weekPattern: weekPattern ?? this.weekPattern,
-      customWeeks: customWeeks ?? this.customWeeks,
+      weekPattern: _copyWithNullable(weekPattern, this.weekPattern),
+      customWeeks: _copyWithNullable(customWeeks, this.customWeeks),
       isDeleted: isDeleted ?? this.isDeleted,
       createdAt: createdAt ?? this.createdAt,
     );

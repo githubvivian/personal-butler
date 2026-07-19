@@ -43,3 +43,25 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Local environment and root-level signing files
+.env
+.env.*
+!.env.example
+/*.jks
+/*.keystore
+/*.pem
+/*.p12
+/*.pfx
+/android/*.pem
+/android/*.p12
+/android/*.pfx
+
+# Local databases and personal backup exports
+/personal_butler.db
+/personal_butler.db-*
+*.pbak
+
+# Android/Gradle generated state outside the app module
+/android/build/
+/android/.kotlin/

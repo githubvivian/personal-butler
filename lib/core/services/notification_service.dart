@@ -1,17 +1,60 @@
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
+import 'notification_navigation_controller.dart';
+
+Future<void> scheduleExactAlarmWithPermissionFallback(
+  Future<void> Function(AndroidScheduleMode mode) schedule,
+) async {
+  try {
+    await schedule(AndroidScheduleMode.exactAllowWhileIdle);
+  } on PlatformException catch (error) {
+    if (error.code != 'exact_alarms_not_permitted') {
+      rethrow;
+    }
+    await schedule(AndroidScheduleMode.inexactAllowWhileIdle);
+  }
+}
+
 class NotificationService {
   NotificationService._();
+
+  @visibleForTesting
+  NotificationService.forTesting() : this._();
+
   static final NotificationService instance = NotificationService._();
 
   final _plugin = FlutterLocalNotificationsPlugin();
   bool _ready = false;
+  Future<void>? _initFuture;
 
-  Future<void> init() async {
-    if (_ready) return;
+  Future<void> init() {
+    if (_ready) return Future<void>.value();
+    final inFlight = _initFuture;
+    if (inFlight != null) return inFlight;
+
+    final future = _initialize();
+    _initFuture = future;
+    future.then<void>(
+      (_) => _clearInitFuture(future),
+      onError: (Object error, StackTrace stackTrace) {
+        _clearInitFuture(future);
+      },
+    );
+    return future;
+  }
+
+  void _clearInitFuture(Future<void> future) {
+    if (identical(_initFuture, future)) {
+      _initFuture = null;
+    }
+  }
+
+  Future<void> _initialize() async {
     tz.initializeTimeZones();
     try {
       final tzInfo = await FlutterTimezone.getLocalTimezone();
@@ -22,7 +65,25 @@ class NotificationService {
 
     const android = AndroidInitializationSettings('@mipmap/ic_launcher');
     const settings = InitializationSettings(android: android);
-    await _plugin.initialize(settings);
+    await _plugin.initialize(
+      settings,
+      onDidReceiveNotificationResponse: (response) {
+        NotificationNavigationController.instance.acceptPayload(
+          response.payload,
+        );
+      },
+    );
+    try {
+      final launchDetails = await _plugin.getNotificationAppLaunchDetails();
+      if (launchDetails?.didNotificationLaunchApp == true) {
+        NotificationNavigationController.instance.acceptPayload(
+          launchDetails?.notificationResponse?.payload,
+        );
+      }
+    } catch (_) {
+      // Launch details are optional on vendor Android implementations. A
+      // normal startup must not fail merely because they are unavailable.
+    }
 
     const channelStrong = AndroidNotificationChannel(
       'personal_butler_reminders',
@@ -36,19 +97,32 @@ class NotificationService {
       description: '悬而未决、生日临近等弱提醒',
       importance: Importance.defaultImportance,
     );
-    final androidPlugin = _plugin.resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin>();
+    final androidPlugin = _plugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
     await androidPlugin?.createNotificationChannel(channelStrong);
     await androidPlugin?.createNotificationChannel(channelWeak);
 
     _ready = true;
   }
 
-  Future<void> requestAndroidPermission() async {
+  Future<bool?> requestAndroidPermission() async {
     if (!_ready) await init();
-    final androidPlugin = _plugin.resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin>();
-    await androidPlugin?.requestNotificationsPermission();
+    final androidPlugin = _plugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
+    return androidPlugin?.requestNotificationsPermission();
+  }
+
+  Future<bool?> requestExactAlarmsPermission() async {
+    if (!_ready) await init();
+    final androidPlugin = _plugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
+    return androidPlugin?.requestExactAlarmsPermission();
   }
 
   Future<void> scheduleItemReminder({
@@ -56,27 +130,48 @@ class NotificationService {
     required String title,
     required String body,
     required DateTime when,
+  }) {
+    return scheduleItemReminderWithPayload(
+      id: id,
+      title: title,
+      body: body,
+      when: when,
+      payload: null,
+    );
+  }
+
+  Future<void> scheduleItemReminderWithPayload({
+    required int id,
+    required String title,
+    required String body,
+    required DateTime when,
+    required String? payload,
   }) async {
     if (!_ready) await init();
     if (!when.isAfter(DateTime.now())) return;
 
-    await _plugin.zonedSchedule(
-      id,
-      title,
-      body,
-      tz.TZDateTime.from(when, tz.local),
-      const NotificationDetails(
-        android: AndroidNotificationDetails(
-          'personal_butler_reminders',
-          '日程提醒',
-          channelDescription: '会议、生日当天等强提醒',
-          importance: Importance.high,
-          priority: Priority.high,
+    await scheduleExactAlarmWithPermissionFallback(
+      (androidScheduleMode) => _plugin.zonedSchedule(
+        id,
+        title,
+        body,
+        tz.TZDateTime.from(when, tz.local),
+        const NotificationDetails(
+          android: AndroidNotificationDetails(
+            'personal_butler_reminders',
+            '日程提醒',
+            channelDescription: '会议、生日当天等强提醒',
+            importance: Importance.high,
+            priority: Priority.high,
+            visibility: NotificationVisibility.private,
+            category: AndroidNotificationCategory.reminder,
+          ),
         ),
+        androidScheduleMode: androidScheduleMode,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+        payload: payload,
       ),
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
     );
   }
 
@@ -85,6 +180,22 @@ class NotificationService {
     required String title,
     required String body,
     required DateTime when,
+  }) {
+    return scheduleWeakReminderWithPayload(
+      id: id,
+      title: title,
+      body: body,
+      when: when,
+      payload: null,
+    );
+  }
+
+  Future<void> scheduleWeakReminderWithPayload({
+    required int id,
+    required String title,
+    required String body,
+    required DateTime when,
+    required String? payload,
   }) async {
     if (!_ready) await init();
     if (!when.isAfter(DateTime.now())) return;
@@ -101,13 +212,34 @@ class NotificationService {
           channelDescription: '悬而未决、生日临近等弱提醒',
           importance: Importance.defaultImportance,
           priority: Priority.defaultPriority,
+          visibility: NotificationVisibility.private,
+          category: AndroidNotificationCategory.reminder,
         ),
       ),
       androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
       uiLocalNotificationDateInterpretation:
           UILocalNotificationDateInterpretation.absoluteTime,
+      payload: payload,
     );
   }
 
-  Future<void> cancel(int id) => _plugin.cancel(id);
+  Future<Set<int>> pendingNotificationIds() async {
+    if (!_ready) await init();
+    final requests = await _plugin.pendingNotificationRequests();
+    return requests.map((request) => request.id).toSet();
+  }
+
+  Future<Set<int>> activeNotificationIds() async {
+    if (!_ready) await init();
+    final notifications = await _plugin.getActiveNotifications();
+    return {
+      for (final notification in notifications)
+        if (notification.id != null) notification.id!,
+    };
+  }
+
+  Future<void> cancel(int id) async {
+    if (!_ready) await init();
+    await _plugin.cancel(id);
+  }
 }
