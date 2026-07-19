@@ -32,6 +32,7 @@ class _BirthdayScreenState extends State<BirthdayScreen> {
   bool _hasSnapshot = false;
   bool _adding = false;
   int _loadGeneration = 0;
+  int _addGeneration = 0;
   final Set<String> _deletingIds = <String>{};
 
   BirthdayRepository get _repository =>
@@ -47,10 +48,19 @@ class _BirthdayScreenState extends State<BirthdayScreen> {
   void didUpdateWidget(covariant BirthdayScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!identical(oldWidget.birthdayRepository, widget.birthdayRepository)) {
+      _addGeneration += 1;
+      _adding = false;
       _items = [];
       _hasSnapshot = false;
       _load();
     }
+  }
+
+  @override
+  void dispose() {
+    _loadGeneration += 1;
+    _addGeneration += 1;
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -79,149 +89,71 @@ class _BirthdayScreenState extends State<BirthdayScreen> {
 
   Future<void> _add() async {
     if (_adding) return;
+    final generation = ++_addGeneration;
+    final repository = _repository;
+    final coordinator =
+        widget.notificationPermissionCoordinator ??
+        NotificationPermissionCoordinator.instance;
     setState(() => _adding = true);
     try {
-      await _addOnce();
-    } catch (_) {
-      if (mounted) snack(context, '保存失败，请重试');
-    } finally {
-      if (mounted) setState(() => _adding = false);
-    }
-  }
-
-  Future<void> _addOnce() async {
-    var nameInput = '';
-    var relationInput = '';
-    var monthInput = '1';
-    var dayInput = '1';
-    bool isLunar = false;
-    bool dialogSubmitted = false;
-    String? errorText;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => StatefulBuilder(
-        builder: (context, setLocal) => AlertDialog(
-          title: const Text('添加生日'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  decoration: const InputDecoration(labelText: '姓名'),
-                  onChanged: (value) => nameInput = value,
-                ),
-                TextField(
-                  decoration: const InputDecoration(labelText: '关系'),
-                  onChanged: (value) => relationInput = value,
-                ),
-                SwitchListTile(
-                  title: const Text('农历生日'),
-                  value: isLunar,
-                  onChanged: (v) => setLocal(() => isLunar = v),
-                ),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextFormField(
-                        initialValue: monthInput,
-                        decoration: const InputDecoration(labelText: '月'),
-                        keyboardType: TextInputType.number,
-                        onChanged: (value) => monthInput = value,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: TextFormField(
-                        initialValue: dayInput,
-                        decoration: const InputDecoration(labelText: '日'),
-                        keyboardType: TextInputType.number,
-                        onChanged: (value) => dayInput = value,
-                      ),
-                    ),
-                  ],
-                ),
-                if (errorText != null) ...[
-                  const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      errorText!,
-                      style: const TextStyle(color: AppColors.danger),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () {
-                if (dialogSubmitted) return;
-                final nameValue = nameInput.trim();
-                final month = int.tryParse(monthInput.trim());
-                final day = int.tryParse(dayInput.trim());
-                if (nameValue.isEmpty) {
-                  setLocal(() => errorText = '请输入姓名');
-                  return;
+      final permissionResult = await showDialog<NotificationPermissionResult>(
+        context: context,
+        builder: (_) => _BirthdayEditorDialog(
+          onSave:
+              ({
+                required name,
+                required relation,
+                required isLunar,
+                required month,
+                required day,
+              }) async {
+                if (!_isCurrentAdd(generation, repository)) {
+                  throw const _InactiveBirthdayEditor();
                 }
-                if (month == null ||
-                    day == null ||
-                    !BirthdayDateHelper.isValidDate(
+                final result = await coordinator.requestThenPersist(
+                  requiresPermission: true,
+                  persist: () async {
+                    if (!_isCurrentAdd(generation, repository)) {
+                      throw const _InactiveBirthdayEditor();
+                    }
+                    await repository.create(
+                      name: name,
+                      relation: relation,
                       isLunar: isLunar,
                       month: month,
                       day: day,
-                    )) {
-                  setLocal(() => errorText = '请输入有效的生日日期');
-                  return;
-                }
-                dialogSubmitted = true;
-                Navigator.pop(context, true);
-              },
-              child: const Text('保存'),
-            ),
-          ],
-        ),
-      ),
-    );
-    final nameValue = nameInput.trim();
-    final relationValue = relationInput.trim();
-    final month = int.tryParse(monthInput.trim());
-    final day = int.tryParse(dayInput.trim());
-    if (!mounted || ok != true || nameValue.isEmpty) return;
-    if (month == null ||
-        day == null ||
-        !BirthdayDateHelper.isValidDate(
-          isLunar: isLunar,
-          month: month,
-          day: day,
-        )) {
-      snack(context, '请输入有效的生日日期');
-      return;
-    }
-    final repository = _repository;
-    final permissionResult =
-        await (widget.notificationPermissionCoordinator ??
-                NotificationPermissionCoordinator.instance)
-            .requestThenPersist(
-              requiresPermission: true,
-              persist: () async {
-                await repository.create(
-                  name: nameValue,
-                  relation: relationValue,
-                  isLunar: isLunar,
-                  month: month,
-                  day: day,
+                    );
+                  },
                 );
+                if (!_isCurrentAdd(generation, repository)) {
+                  throw const _InactiveBirthdayEditor();
+                }
+                return result;
               },
-            );
-    if (!mounted || !identical(repository, _repository)) return;
-    final warning = permissionResult.warningMessage;
-    if (warning != null) snack(context, warning);
-    await _load();
+        ),
+      );
+      if (!_isCurrentAdd(generation, repository) || permissionResult == null) {
+        return;
+      }
+      if (!mounted) return;
+      final warning = permissionResult.warningMessage;
+      if (warning != null) snack(context, warning);
+      await _load();
+    } catch (_) {
+      if (mounted && _isCurrentAdd(generation, repository)) {
+        snack(context, '保存失败，请重试');
+      }
+    } finally {
+      if (mounted && generation == _addGeneration) {
+        setState(() => _adding = false);
+      }
+    }
+  }
+
+  bool _isCurrentAdd(int generation, BirthdayRepository repository) {
+    return mounted &&
+        generation == _addGeneration &&
+        identical(repository, _repository);
   }
 
   @override
@@ -409,4 +341,168 @@ class _BirthdayScreenState extends State<BirthdayScreen> {
       if (mounted) setState(() => _deletingIds.remove(birthday.id));
     }
   }
+}
+
+class _BirthdayEditorDialog extends StatefulWidget {
+  const _BirthdayEditorDialog({required this.onSave});
+
+  final Future<NotificationPermissionResult> Function({
+    required String name,
+    required String relation,
+    required bool isLunar,
+    required int month,
+    required int day,
+  })
+  onSave;
+
+  @override
+  State<_BirthdayEditorDialog> createState() => _BirthdayEditorDialogState();
+}
+
+class _BirthdayEditorDialogState extends State<_BirthdayEditorDialog> {
+  final _name = TextEditingController();
+  final _relation = TextEditingController();
+  final _month = TextEditingController(text: '1');
+  final _day = TextEditingController(text: '1');
+  bool _isLunar = false;
+  bool _saving = false;
+  String? _errorText;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _relation.dispose();
+    _month.dispose();
+    _day.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_saving) return;
+    final name = _name.text.trim();
+    final relation = _relation.text.trim();
+    final month = int.tryParse(_month.text.trim());
+    final day = int.tryParse(_day.text.trim());
+    if (name.isEmpty) {
+      setState(() => _errorText = '请输入姓名');
+      return;
+    }
+    if (month == null ||
+        day == null ||
+        !BirthdayDateHelper.isValidDate(
+          isLunar: _isLunar,
+          month: month,
+          day: day,
+        )) {
+      setState(() => _errorText = '请输入有效的生日日期');
+      return;
+    }
+
+    final isLunar = _isLunar;
+    setState(() {
+      _saving = true;
+      _errorText = null;
+    });
+    try {
+      final result = await widget.onSave(
+        name: name,
+        relation: relation,
+        isLunar: isLunar,
+        month: month,
+        day: day,
+      );
+      if (!mounted) return;
+      Navigator.pop(context, result);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _errorText = '保存失败，请重试';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: !_saving,
+      child: AlertDialog(
+        title: const Text('添加生日'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                key: const Key('birthday_name_field'),
+                controller: _name,
+                enabled: !_saving,
+                decoration: const InputDecoration(labelText: '姓名'),
+              ),
+              TextField(
+                key: const Key('birthday_relation_field'),
+                controller: _relation,
+                enabled: !_saving,
+                decoration: const InputDecoration(labelText: '关系'),
+              ),
+              SwitchListTile(
+                title: const Text('农历生日'),
+                value: _isLunar,
+                onChanged: _saving
+                    ? null
+                    : (value) => setState(() => _isLunar = value),
+              ),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      key: const Key('birthday_month_field'),
+                      controller: _month,
+                      enabled: !_saving,
+                      decoration: const InputDecoration(labelText: '月'),
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextField(
+                      key: const Key('birthday_day_field'),
+                      controller: _day,
+                      enabled: !_saving,
+                      decoration: const InputDecoration(labelText: '日'),
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+                ],
+              ),
+              if (_errorText != null) ...[
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    _errorText!,
+                    style: const TextStyle(color: AppColors.danger),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: _saving ? null : () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            key: const Key('birthday_dialog_save'),
+            onPressed: _saving ? null : _save,
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InactiveBirthdayEditor implements Exception {
+  const _InactiveBirthdayEditor();
 }

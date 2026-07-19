@@ -290,23 +290,156 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await _openAndSubmitBirthday(tester, 'First attempt');
+    await tester.tap(find.byIcon(Icons.add));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('birthday_name_field')),
+      '  Recovered birthday  ',
+    );
+    await tester.enterText(
+      find.byKey(const Key('birthday_relation_field')),
+      '家人',
+    );
+    await tester.tap(find.byType(SwitchListTile));
+    await tester.enterText(find.byKey(const Key('birthday_month_field')), '8');
+    await tester.enterText(find.byKey(const Key('birthday_day_field')), '21');
+    await tester.tap(find.byKey(const Key('birthday_dialog_save')));
+    await tester.pumpAndSettle();
 
     expect(find.text('保存失败，请重试'), findsOneWidget);
     expect(find.textContaining(privateMarker), findsNothing);
+    expect(find.text('添加生日'), findsOneWidget);
     expect(
       tester
           .widget<IconButton>(find.widgetWithIcon(IconButton, Icons.add))
           .onPressed,
-      isNotNull,
+      isNull,
     );
     expect(repository.createCalls, 1);
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('birthday_name_field')))
+          .controller
+          ?.text,
+      '  Recovered birthday  ',
+    );
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('birthday_relation_field')))
+          .controller
+          ?.text,
+      '家人',
+    );
+    expect(
+      tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value,
+      isTrue,
+    );
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('birthday_month_field')))
+          .controller
+          ?.text,
+      '8',
+    );
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('birthday_day_field')))
+          .controller
+          ?.text,
+      '21',
+    );
 
-    await _openAndSubmitBirthday(tester, 'Recovered birthday');
+    await tester.tap(find.byKey(const Key('birthday_dialog_save')));
+    await tester.pumpAndSettle();
 
+    expect(find.text('添加生日'), findsNothing);
     expect(find.text('Recovered birthday'), findsOneWidget);
     expect(repository.createCalls, 2);
     expect(repository.getAllCalls, 2);
+    expect(repository.createdInputs, [
+      (
+        name: 'Recovered birthday',
+        relation: '家人',
+        isLunar: true,
+        month: 8,
+        day: 21,
+      ),
+      (
+        name: 'Recovered birthday',
+        relation: '家人',
+        isLunar: true,
+        month: 8,
+        day: 21,
+      ),
+    ]);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('birthday editor cannot write after repository rebind', (
+    tester,
+  ) async {
+    final firstRepository = _ScriptedBirthdayRepository(
+      getAllResults: [<BirthdayModel>[]],
+    );
+    final secondRepository = _ScriptedBirthdayRepository(
+      getAllResults: [<BirthdayModel>[]],
+    );
+    final repository = ValueNotifier<BirthdayRepository>(firstRepository);
+    addTearDown(repository.dispose);
+    final permission = Completer<bool?>();
+    var permissionRequests = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ValueListenableBuilder<BirthdayRepository>(
+          valueListenable: repository,
+          builder: (_, value, _) => BirthdayScreen(
+            key: const ValueKey('birthday-screen'),
+            birthdayRepository: value,
+            notificationPermissionCoordinator:
+                NotificationPermissionCoordinator(
+                  requestPermission: () async {
+                    permissionRequests += 1;
+                    return permission.future;
+                  },
+                ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.add));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('birthday_name_field')),
+      'stale birthday draft',
+    );
+    await tester.tap(find.byKey(const Key('birthday_dialog_save')));
+    await tester.pump();
+
+    expect(permissionRequests, 1);
+    expect(firstRepository.createCalls, 0);
+
+    repository.value = secondRepository;
+    await tester.pump();
+    permission.complete(true);
+    await tester.pumpAndSettle();
+
+    expect(permissionRequests, 1);
+    expect(firstRepository.createCalls, 0);
+    expect(secondRepository.createCalls, 0);
+    expect(find.text('保存失败，请重试'), findsOneWidget);
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('birthday_name_field')))
+          .controller
+          ?.text,
+      'stale birthday draft',
+    );
+
+    await tester.tap(find.widgetWithText(TextButton, '取消'));
+    await tester.pumpAndSettle();
+    expect(find.text('添加生日'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -386,6 +519,50 @@ void main() {
     createResult.complete(_birthday('Disposed save'));
     await tester.pump();
 
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('pending permission cannot persist after disposal', (
+    tester,
+  ) async {
+    final permission = Completer<bool?>();
+    final repository = _ScriptedBirthdayRepository(
+      getAllResults: [<BirthdayModel>[]],
+    );
+    var permissionRequests = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BirthdayScreen(
+          birthdayRepository: repository,
+          notificationPermissionCoordinator: NotificationPermissionCoordinator(
+            requestPermission: () async {
+              permissionRequests += 1;
+              return permission.future;
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.add));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('birthday_name_field')),
+      'disposed permission draft',
+    );
+    await tester.tap(find.byKey(const Key('birthday_dialog_save')));
+    await tester.pump();
+
+    expect(permissionRequests, 1);
+    expect(repository.createCalls, 0);
+
+    await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+    permission.complete(true);
+    await tester.pump();
+    await tester.pump();
+
+    expect(repository.createCalls, 0);
     expect(tester.takeException(), isNull);
   });
 
@@ -494,14 +671,6 @@ void main() {
   });
 }
 
-Future<void> _openAndSubmitBirthday(WidgetTester tester, String name) async {
-  await tester.tap(find.byIcon(Icons.add));
-  await tester.pumpAndSettle();
-  await tester.enterText(find.byType(TextField).first, name);
-  await tester.tap(find.widgetWithText(FilledButton, '保存'));
-  await tester.pumpAndSettle();
-}
-
 class _SpyBirthdayRepository extends BirthdayRepository {
   final created = <({bool isLunar, int month, int day})>[];
 
@@ -546,6 +715,8 @@ class _ScriptedBirthdayRepository extends BirthdayRepository {
   final List<Object> _createResults;
   final List<Object> _deleteResults;
   final List<String> softDeletedIds = [];
+  final List<({String name, String relation, bool isLunar, int month, int day})>
+  createdInputs = [];
   int getAllCalls = 0;
   int createCalls = 0;
 
@@ -578,6 +749,13 @@ class _ScriptedBirthdayRepository extends BirthdayRepository {
     int remindDaysBefore = 3,
   }) {
     createCalls += 1;
+    createdInputs.add((
+      name: name,
+      relation: relation,
+      isLunar: isLunar,
+      month: month,
+      day: day,
+    ));
     if (_createResults.isEmpty) {
       return Future<BirthdayModel>.value(_birthday(name));
     }
