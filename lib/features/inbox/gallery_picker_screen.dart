@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:photo_manager/photo_manager.dart';
 import '../../core/constants/app_constants.dart';
@@ -22,11 +24,32 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen> {
   bool _empty = false;
   bool _permissionLost = false;
   bool _hasError = false;
+  final Set<_PendingGalleryLoad> _pendingLoads = <_PendingGalleryLoad>{};
 
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    for (final pending in _pendingLoads.toList(growable: false)) {
+      pending.cancel();
+    }
+    _pendingLoads.clear();
+    super.dispose();
+  }
+
+  Future<T> _withLoadTimeout<T>(Future<T> operation) {
+    late final _GalleryLoadDeadline<T> deadline;
+    deadline = _GalleryLoadDeadline<T>(
+      operation: operation,
+      timeout: widget.loadTimeout,
+      onDone: () => _pendingLoads.remove(deadline),
+    );
+    _pendingLoads.add(deadline);
+    return deadline.future;
   }
 
   Future<void> _load() async {
@@ -39,9 +62,11 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen> {
       _loading = true;
     });
     try {
-      final permissionState = await PhotoManager.getPermissionState(
-        requestOption: PhotoPermissionHelper.imagePermissionRequestOption,
-      ).timeout(widget.loadTimeout);
+      final permissionState = await _withLoadTimeout(
+        PhotoManager.getPermissionState(
+          requestOption: PhotoPermissionHelper.imagePermissionRequestOption,
+        ),
+      );
       if (!mounted) return;
       if (!permissionState.hasAccess) {
         setState(() {
@@ -51,18 +76,20 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen> {
         });
         return;
       }
-      final paths = await PhotoManager.getAssetPathList(
-        type: RequestType.image,
-        onlyAll: true,
-        filterOption: FilterOptionGroup(
-          imageOption: const FilterOption(
-            sizeConstraint: SizeConstraint(ignoreSize: true),
+      final paths = await _withLoadTimeout(
+        PhotoManager.getAssetPathList(
+          type: RequestType.image,
+          onlyAll: true,
+          filterOption: FilterOptionGroup(
+            imageOption: const FilterOption(
+              sizeConstraint: SizeConstraint(ignoreSize: true),
+            ),
+            orders: [
+              const OrderOption(type: OrderOptionType.createDate, asc: false),
+            ],
           ),
-          orders: [
-            const OrderOption(type: OrderOptionType.createDate, asc: false),
-          ],
         ),
-      ).timeout(widget.loadTimeout);
+      );
       if (!mounted) return;
       if (paths.isEmpty) {
         setState(() {
@@ -73,9 +100,9 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen> {
         return;
       }
       final recent = paths.first;
-      final assets = await recent
-          .getAssetListPaged(page: 0, size: 120)
-          .timeout(widget.loadTimeout);
+      final assets = await _withLoadTimeout(
+        recent.getAssetListPaged(page: 0, size: 120),
+      );
       if (!mounted) return;
       setState(() {
         _permissionState = permissionState;
@@ -281,4 +308,61 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen> {
       ),
     );
   }
+}
+
+abstract interface class _PendingGalleryLoad {
+  void cancel();
+}
+
+class _GalleryLoadDeadline<T> implements _PendingGalleryLoad {
+  _GalleryLoadDeadline({
+    required Future<T> operation,
+    required Duration timeout,
+    required this._onDone,
+  }) {
+    _timer = Timer(
+      timeout,
+      () => _completeError(
+        TimeoutException('Gallery metadata load timed out.', timeout),
+        StackTrace.current,
+      ),
+    );
+    operation.then<void>(_complete, onError: _completeError);
+  }
+
+  final Completer<T> _completer = Completer<T>();
+  late final Timer _timer;
+  VoidCallback? _onDone;
+  bool _settled = false;
+
+  Future<T> get future => _completer.future;
+
+  void _complete(T value) {
+    if (!_settle()) return;
+    _completer.complete(value);
+  }
+
+  void _completeError(Object error, StackTrace stackTrace) {
+    if (!_settle()) return;
+    _completer.completeError(error, stackTrace);
+  }
+
+  bool _settle() {
+    if (_settled) return false;
+    _settled = true;
+    _timer.cancel();
+    final onDone = _onDone;
+    _onDone = null;
+    onDone?.call();
+    return true;
+  }
+
+  @override
+  void cancel() {
+    _completeError(const _GalleryLoadCancelled(), StackTrace.current);
+  }
+}
+
+class _GalleryLoadCancelled implements Exception {
+  const _GalleryLoadCancelled();
 }

@@ -382,6 +382,25 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('dispose cancels a pending gallery load deadline', (
+    tester,
+  ) async {
+    final permissionResult = Completer<PermissionState>();
+    final plugin = _GalleryPhotoManagerPlugin(
+      permissionStates: [permissionResult.future],
+      pathResults: const [],
+    );
+    PhotoManager.withPlugin(plugin);
+
+    await tester.pumpWidget(const MaterialApp(home: GalleryPickerScreen()));
+    await tester.pump();
+    await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+    await tester.pump();
+
+    expect(plugin.pathTypes, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('non-empty gallery displays and returns the selected asset id', (
     tester,
   ) async {
