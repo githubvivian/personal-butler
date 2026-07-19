@@ -101,6 +101,92 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('rapid export callbacks start only one backup', (tester) async {
+    final export = Completer<void>();
+    var exports = 0;
+    final backupService = _ControlledBackupService((_) {
+      exports++;
+      return export.future;
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(home: BackupScreen(backupService: backupService)),
+    );
+    await tester.enterText(find.byType(TextField), 'secret1');
+    final exportButton = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, '导出加密备份'),
+    );
+
+    exportButton.onPressed!();
+    exportButton.onPressed!();
+    await tester.pump();
+
+    expect(exports, 1);
+    export.complete();
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('rapid import callbacks open only one restore flow', (
+    tester,
+  ) async {
+    final appState = _TrackingAppState();
+    final backupService = _ControlledImportBackupService();
+    await tester.pumpWidget(
+      ChangeNotifierProvider<AppState>.value(
+        value: appState,
+        child: MaterialApp(home: BackupScreen(backupService: backupService)),
+      ),
+    );
+    await tester.enterText(find.byType(TextField), 'secret1');
+    final importButton = tester.widget<OutlinedButton>(
+      find.widgetWithText(OutlinedButton, '从备份恢复'),
+    );
+
+    importButton.onPressed!();
+    importButton.onPressed!();
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AlertDialog), findsOneWidget);
+    await tester.tap(find.text('继续'));
+    await tester.pumpAndSettle();
+
+    expect(backupService.imports, 1);
+    expect(appState.refreshCount, 1);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('restore confirmation closes after the backup page is disposed', (
+    tester,
+  ) async {
+    final showBackup = ValueNotifier<bool>(true);
+    addTearDown(showBackup.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ValueListenableBuilder<bool>(
+          valueListenable: showBackup,
+          builder: (_, visible, _) =>
+              visible ? const BackupScreen() : const SizedBox.shrink(),
+        ),
+      ),
+    );
+    await tester.enterText(find.byType(TextField), 'secret1');
+    await tester.tap(find.text('从备份恢复'));
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsOneWidget);
+
+    showBackup.value = false;
+    await tester.pump();
+    expect(find.byType(BackupScreen), findsNothing);
+    expect(find.byType(AlertDialog), findsOneWidget);
+
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('successful restore invalidates retained item screens once', (
     tester,
   ) async {

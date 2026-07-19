@@ -17,6 +17,7 @@ class BackupScreen extends StatefulWidget {
 class _BackupScreenState extends State<BackupScreen> {
   final _password = TextEditingController();
   late final BackupService _backup;
+  bool _operationActive = false;
   bool _busy = false;
 
   @override
@@ -32,51 +33,58 @@ class _BackupScreenState extends State<BackupScreen> {
   }
 
   Future<void> _export() async {
+    if (_operationActive) return;
     if (_password.text.length < 6) {
       snack(context, '备份密码至少6位');
       return;
     }
+    final password = _password.text;
+    _operationActive = true;
     setState(() => _busy = true);
     try {
-      await _backup.shareBackup(_password.text);
+      await _backup.shareBackup(password);
       if (mounted) snack(context, '加密备份已生成，请保存到安全位置');
     } catch (_) {
       if (mounted) snack(context, '备份失败，请稍后重试');
     } finally {
+      _operationActive = false;
       if (mounted) setState(() => _busy = false);
     }
   }
 
   Future<void> _import() async {
+    if (_operationActive) return;
     if (_password.text.length < 6) {
       snack(context, '请输入备份时设置的密码');
       return;
     }
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('恢复备份'),
-        content: const Text(
-          '恢复将覆盖当前全部数据库记录。若备份来自卸载前、清除应用数据前或其他设备，'
-          '密码保险库内容可能无法解密；相册原图不会恢复。是否继续？',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('继续'),
-          ),
-        ],
-      ),
-    );
-    if (!mounted || confirm != true) return;
-    final appState = context.read<AppState>();
-    setState(() => _busy = true);
+    final password = _password.text;
+    _operationActive = true;
     try {
-      final outcome = await _backup.importEncryptedBackup(_password.text);
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('恢复备份'),
+          content: const Text(
+            '恢复将覆盖当前全部数据库记录。若备份来自卸载前、清除应用数据前或其他设备，'
+            '密码保险库内容可能无法解密；相册原图不会恢复。是否继续？',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('继续'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted || confirm != true) return;
+      setState(() => _busy = true);
+      final appState = context.read<AppState>();
+      final outcome = await _backup.importEncryptedBackup(password);
       if (outcome == BackupImportOutcome.cancelled) return;
       appState.items.invalidateAfterExternalWrite();
       appState.refresh();
@@ -90,7 +98,8 @@ class _BackupScreenState extends State<BackupScreen> {
       if (!mounted) return;
       snack(context, '恢复失败，请检查密码与文件');
     } finally {
-      if (mounted) setState(() => _busy = false);
+      _operationActive = false;
+      if (mounted && _busy) setState(() => _busy = false);
     }
   }
 
