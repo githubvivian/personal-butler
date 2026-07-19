@@ -96,6 +96,32 @@ String scheduleConflictMessage(List<ScheduleEntryModel> conflicts) {
       .join('\n');
 }
 
+Future<bool> showScheduleConflictConfirmation(
+  BuildContext context, {
+  required String description,
+  required List<ScheduleEntryModel> conflicts,
+}) async {
+  final result = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      scrollable: true,
+      title: const Text('发现课表冲突'),
+      content: Text('$description\n\n${scheduleConflictMessage(conflicts)}'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext, false),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(dialogContext, true),
+          child: const Text('仍然保存'),
+        ),
+      ],
+    ),
+  );
+  return result == true;
+}
+
 class ScheduleEntryDraft {
   final String title;
   final String? location;

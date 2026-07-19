@@ -122,28 +122,12 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
       );
       if (!mounted || !_isCurrentMutation(generation)) return;
       if (conflicts.isNotEmpty) {
-        final shouldContinue = await showDialog<bool>(
-          context: context,
-          builder: (_) => AlertDialog(
-            title: const Text('发现课表冲突'),
-            content: Text(
-              '以下课程与当前新增内容存在时间冲突：\n\n${scheduleConflictMessage(conflicts)}',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('取消'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('仍然保存'),
-              ),
-            ],
-          ),
+        final shouldContinue = await showScheduleConflictConfirmation(
+          context,
+          description: '以下课程与当前新增内容存在时间冲突：',
+          conflicts: conflicts,
         );
-        if (!mounted ||
-            !_isCurrentMutation(generation) ||
-            shouldContinue != true) {
+        if (!mounted || !_isCurrentMutation(generation) || !shouldContinue) {
           return;
         }
       }
@@ -198,28 +182,12 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
       );
       if (!mounted || !_isCurrentMutation(generation)) return;
       if (conflicts.isNotEmpty) {
-        final shouldContinue = await showDialog<bool>(
-          context: context,
-          builder: (_) => AlertDialog(
-            title: const Text('发现课表冲突'),
-            content: Text(
-              '以下课程与当前修改内容存在时间冲突：\n\n${scheduleConflictMessage(conflicts)}',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('取消'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('仍然保存'),
-              ),
-            ],
-          ),
+        final shouldContinue = await showScheduleConflictConfirmation(
+          context,
+          description: '以下课程与当前修改内容存在时间冲突：',
+          conflicts: conflicts,
         );
-        if (!mounted ||
-            !_isCurrentMutation(generation) ||
-            shouldContinue != true) {
+        if (!mounted || !_isCurrentMutation(generation) || !shouldContinue) {
           return;
         }
       }

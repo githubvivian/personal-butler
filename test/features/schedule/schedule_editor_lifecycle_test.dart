@@ -94,6 +94,76 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'conflict confirmation scrolls and closes after caller disposal',
+    (tester) async {
+      tester.view.physicalSize = const Size(360, 480);
+      addTearDown(tester.view.resetPhysicalSize);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final showCaller = ValueNotifier<bool>(true);
+      addTearDown(showCaller.dispose);
+      bool? result;
+      final conflicts = List.generate(
+        30,
+        (index) => ScheduleEntryModel(
+          id: 'conflict-$index',
+          owner: 'self',
+          title: '课程$index',
+          weekday: 1,
+          startTime: '08:00',
+          endTime: '09:40',
+          createdAt: DateTime(2026, 7, 19),
+        ),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MediaQuery(
+            data: const MediaQueryData(textScaler: TextScaler.linear(2)),
+            child: ValueListenableBuilder<bool>(
+              valueListenable: showCaller,
+              builder: (_, visible, _) => visible
+                  ? Builder(
+                      key: const ValueKey('conflict-launcher'),
+                      builder: (launcherContext) => ElevatedButton(
+                        onPressed: () async {
+                          result = await showScheduleConflictConfirmation(
+                            launcherContext,
+                            description: '以下课程存在时间冲突：',
+                            conflicts: conflicts,
+                          );
+                        },
+                        child: const Text('打开冲突确认'),
+                      ),
+                    )
+                  : const SizedBox.shrink(),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('打开冲突确认'));
+      await tester.pumpAndSettle();
+      final dialog = tester.widget<AlertDialog>(find.byType(AlertDialog));
+      expect(dialog.scrollable, isTrue);
+      expect(find.textContaining('课程29'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      showCaller.value = false;
+      await tester.pump();
+      expect(find.byKey(const ValueKey('conflict-launcher')), findsNothing);
+      expect(find.text('打开冲突确认'), findsNothing);
+      expect(find.byType(AlertDialog), findsOneWidget);
+
+      await tester.tap(find.text('取消'));
+      await tester.pumpAndSettle();
+      expect(result, isFalse);
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('schedule editor rejects invalid and reversed time ranges', (
     tester,
   ) async {
