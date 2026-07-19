@@ -301,6 +301,31 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('ScheduleSettingsScreen clamps a date above picker range', (
+    tester,
+  ) async {
+    final repository = _ScriptedScheduleRepository()
+      ..settingsResults.add(
+        Future.value(_settings(semesterStartDate: DateTime(2101, 6, 15))),
+      );
+
+    await tester.pumpWidget(
+      MaterialApp(home: ScheduleSettingsScreen(scheduleRepository: repository)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('选择'));
+    await tester.pumpAndSettle();
+
+    final picker = tester.widget<CalendarDatePicker>(
+      find.byType(CalendarDatePicker),
+    );
+    expect(picker.initialDate, DateTime(2100));
+    Navigator.of(tester.element(find.byType(CalendarDatePicker))).pop();
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
 }
 
 class _Failure {

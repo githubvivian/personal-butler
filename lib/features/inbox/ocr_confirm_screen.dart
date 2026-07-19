@@ -9,6 +9,7 @@ import '../../core/models/models.dart';
 import '../../core/providers/app_state.dart';
 import '../../core/repositories/item_repository.dart';
 import '../../core/services/notification_permission_coordinator.dart';
+import '../../core/utils/date_picker_bounds.dart';
 import '../../core/utils/ocr_service.dart';
 import '../widgets/common_widgets.dart';
 
@@ -159,11 +160,17 @@ class _OcrConfirmScreenState extends State<OcrConfirmScreen> {
     final generation = _loadGeneration;
     final itemId = widget.itemId;
     if (!_isCurrentOperation(generation, itemId)) return;
+    final firstDate = DateTime(2020);
+    final lastDate = DateTime(2100);
     final date = await showDatePicker(
       context: context,
-      initialDate: _startAt ?? DateTime.now(),
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2100),
+      initialDate: clampDateToPickerBounds(
+        _startAt ?? DateTime.now(),
+        firstDate: firstDate,
+        lastDate: lastDate,
+      ),
+      firstDate: firstDate,
+      lastDate: lastDate,
     );
     if (date == null || !mounted || !_isCurrentOperation(generation, itemId)) {
       return;

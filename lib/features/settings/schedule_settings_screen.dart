@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../core/models/models.dart';
 import '../../core/providers/app_state.dart';
 import '../../core/repositories/schedule_repository.dart';
+import '../../core/utils/date_picker_bounds.dart';
 import '../widgets/common_widgets.dart';
 
 class ScheduleSettingsScreen extends StatefulWidget {
@@ -177,11 +178,17 @@ class _ScheduleSettingsScreenState extends State<ScheduleSettingsScreen> {
                               ? null
                               : () async {
                                   final loadGeneration = _loadGeneration;
+                                  final firstDate = DateTime(2020);
+                                  final lastDate = DateTime(2100);
                                   final picked = await showDatePicker(
                                     context: context,
-                                    initialDate: startDate ?? DateTime.now(),
-                                    firstDate: DateTime(2020),
-                                    lastDate: DateTime(2100),
+                                    initialDate: clampDateToPickerBounds(
+                                      startDate ?? DateTime.now(),
+                                      firstDate: firstDate,
+                                      lastDate: lastDate,
+                                    ),
+                                    firstDate: firstDate,
+                                    lastDate: lastDate,
                                   );
                                   if (!mounted ||
                                       picked == null ||

@@ -409,6 +409,36 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
+    testWidgets('date picker clamps a legacy date below its supported range', (
+      tester,
+    ) async {
+      final repository = _FakeItemRepository(
+        getByIdResults: [
+          _item('legacy-date', startAt: DateTime(1900, 6, 15, 8, 30)),
+        ],
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: OcrConfirmScreen(
+            itemId: 'legacy-date',
+            itemRepository: repository,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(ListTile, '时间'));
+      await tester.pumpAndSettle();
+
+      final picker = tester.widget<CalendarDatePicker>(
+        find.byType(CalendarDatePicker),
+      );
+      expect(picker.initialDate, DateTime(2020));
+      Navigator.of(tester.element(find.byType(CalendarDatePicker))).pop();
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets(
       'confirm for A stops if the screen switches to B while querying',
       (tester) async {
